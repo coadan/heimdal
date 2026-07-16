@@ -1,3 +1,4 @@
 .dev/
+.worktrees/
 .heimdal.json.tmp*
 dist/
