@@ -17,6 +17,7 @@ const (
 type Config struct {
 	Version    int              `json:"version"`
 	Playwright PlaywrightConfig `json:"playwright"`
+	Session    SessionConfig    `json:"session,omitempty"`
 	Artifacts  ArtifactConfig   `json:"artifacts"`
 }
 
@@ -26,6 +27,21 @@ type PlaywrightConfig struct {
 	RunIDEnv string            `json:"run_id_env,omitempty"`
 	PortEnv  string            `json:"port_env,omitempty"`
 	Env      map[string]string `json:"env,omitempty"`
+}
+
+// SessionConfig describes the project-specific part of an interactive
+// browser session. The browser itself remains owned by Playwright's agent
+// CLI; Heimdal only supplies the server command, URL, environment, and
+// optional executable override.
+type SessionConfig struct {
+	Runner          []string          `json:"runner,omitempty"`
+	Command         []string          `json:"command,omitempty"`
+	URL             string            `json:"url,omitempty"`
+	RunIDEnv        string            `json:"run_id_env,omitempty"`
+	PortEnv         string            `json:"port_env,omitempty"`
+	Env             map[string]string `json:"env,omitempty"`
+	Browser         string            `json:"browser,omitempty"`
+	ServerTimeoutMS int               `json:"server_timeout_ms,omitempty"`
 }
 
 type ArtifactConfig struct {
@@ -40,6 +56,7 @@ type Project struct {
 	PlaywrightConfig string
 	PackageManager   string
 	Runner           []string
+	AgentRunner      []string
 }
 
 func defaultConfig(playwrightConfig string) Config {
@@ -47,6 +64,10 @@ func defaultConfig(playwrightConfig string) Config {
 		Version: 1,
 		Playwright: PlaywrightConfig{
 			Config:   playwrightConfig,
+			RunIDEnv: "HEIMDAL_RUN_ID",
+			PortEnv:  "HEIMDAL_PORT",
+		},
+		Session: SessionConfig{
 			RunIDEnv: "HEIMDAL_RUN_ID",
 			PortEnv:  "HEIMDAL_PORT",
 		},
@@ -78,6 +99,12 @@ func loadConfig(root string, detectedConfig string) (Config, string, error) {
 	}
 	if cfg.Playwright.RunIDEnv == "" {
 		cfg.Playwright.RunIDEnv = "HEIMDAL_RUN_ID"
+	}
+	if cfg.Session.RunIDEnv == "" {
+		cfg.Session.RunIDEnv = cfg.Playwright.RunIDEnv
+	}
+	if cfg.Session.PortEnv == "" {
+		cfg.Session.PortEnv = cfg.Playwright.PortEnv
 	}
 	return cfg, path, nil
 }

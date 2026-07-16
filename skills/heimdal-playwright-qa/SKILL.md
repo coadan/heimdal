@@ -1,96 +1,158 @@
 ---
 name: heimdal-playwright-qa
-description: Use when an agent needs to QA a web application or gameplay flow from a Git worktree with Playwright as the browser runtime, especially when the project needs isolated ports, fixture processes, focused test selection, or actionable screenshots and traces.
+description: Use when an agent needs to explore, diagnose, or regression-test a web application from a Git worktree with Playwright as the only browser runtime.
 ---
 
 # Heimdal Playwright QA
 
-Use Heimdal as the thin, worktree-aware entry point to a repository's native
-Playwright test runner. Heimdal owns discovery, isolation, process cleanup, and
-evidence; Playwright owns browser contexts, locators, assertions, fixtures, and
-the actual test runtime.
+Use Heimdal as the worktree-aware control plane around the official Playwright
+CLI. Playwright owns the browser, locators, actionability, assertions, test
+fixtures, and test reports. Heimdal owns project startup, isolated ports,
+session artifacts, and compact agent-facing evidence.
 
-## Workflow
+## Choose the workflow
 
-1. Read the repository's `AGENTS.md` and the docs that own the flow. Identify
-   the real player-facing or user-facing control path and the narrowest existing
-   Playwright spec that proves it.
-2. From the active worktree, check the runtime:
+Use an interactive session when the behavior is unknown, a visual regression
+needs investigation, or an agent must explore before writing a test:
 
-   ```bash
-   heimdal doctor --json
-   ```
+```bash
+heimdal doctor --json
+heimdal session start --name <short-worktree-name> --headed
+heimdal session observe
+```
 
-   If Chromium is not installed, run `heimdal install chromium` once. Do not
-   install dependencies or start a second copy of the app unless the project
-   contract requires it.
-3. Run one focused proof. Put Playwright arguments after `--` so Heimdal flags
-   remain unambiguous:
+Use a deterministic test run when the relevant Playwright spec and behavior are
+already known:
 
-   ```bash
-   heimdal run -- tests/browser/<flow>.spec.ts --grep "<behavior>"
-   ```
+```bash
+heimdal run -- tests/browser/<flow>.spec.ts --grep "<behavior>"
+```
 
-   Use `--headed` only when visual inspection is necessary. Pass fixture
-   switches as environment variables before the command; the runner preserves
-   them and adds the project-configured run id and port.
-4. Treat the command's exit code and `result.json` as the verdict. On failure,
-   inspect the stdout/stderr tails first, then the saved screenshot, video, or
-   trace. Use `heimdal report --run <id> --json` for a machine-readable recap
-   and `heimdal trace --run <id>` to open the newest trace.
-5. Report the exact worktree, command, run id, result, and artifact directory.
-   Keep failure artifacts until the diagnosis or fix is complete.
+If `doctor` reports that `playwright-cli` is unavailable, install the official
+agent CLI into the project:
 
-## QA rules
+```bash
+heimdal install agent-cli
+```
 
-- Drive real user-facing controls and assert subscribed/rendered outcomes. Do
-  not call reducers, APIs, databases, or private test hooks to manufacture a
-  state that a player could not reach.
-- Prefer one focused spec or grep over the full suite. A retry is evidence only
-  after the first failure is captured; do not hide a deterministic failure by
-  increasing retries.
-- Run from the current Git worktree. Heimdal creates a unique run directory and
-  configurable port so concurrent worktrees do not share browser artifacts or
-  fixture state.
-- Use Playwright only as the browser runtime. Do not substitute the Codex
-  in-app browser, MCP browser control, ad hoc scripts, or another automation
-  layer for a repository's Playwright tests.
-- Keep credentials out of test arguments, screenshots, traces, and logs. Use
-  the project's ignored environment file and bounded test fixtures.
-- If the app cannot start, classify it as an environment/fixture failure and
-  preserve the command and logs; do not rewrite the test to bypass startup.
+If the Playwright agent browser is missing, install it once with
+`heimdal install agent-browser chromium`. Install the repository's test browser
+with `heimdal install chromium` when deterministic tests need it.
+
+## Interactive loop
+
+The intended loop is `observe → act → observe → diagnose → codify`:
+
+```bash
+heimdal session observe
+heimdal session click e12
+heimdal session fill e5 "hello"
+heimdal session press Enter
+heimdal session screenshot
+heimdal session diagnose --json
+heimdal session save --test tests/browser/<new-flow>.spec.ts
+heimdal session stop
+```
+
+`observe` returns an accessibility snapshot with element refs and bounding
+boxes. State-changing actions automatically return the post-action snapshot
+with boxes and append a JSONL record plus stdout/stderr files under the session
+artifact directory; use explicit `observe` after read-only commands.
+
+Use refs from the latest observation (`e12`, `e5`, and so on). Re-observe after
+navigation or a DOM mutation because refs are invalidated when the page changes.
+Prefer refs or user-facing Playwright locators over CSS/XPath. Use screenshots
+for layout, canvas, charts, and visual evidence; use snapshots for structure and
+interaction. Forward Playwright CLI-specific options after `--`, for example:
+
+```bash
+heimdal session observe -- --depth=4
+heimdal session screenshot -- --full-page
+```
+
+Coordinate actions are a fallback for canvas/custom widgets. Record the
+viewport and screenshot dimensions when reasoning from coordinates, and never
+use coordinates when a semantic ref is available.
+
+## Diagnosis and evidence
+
+For an interactive failure, inspect the machine-readable session result and
+preserved evidence:
+
+```bash
+heimdal session status --json
+heimdal session diagnose --json
+```
+
+The session directory contains the session state, generated Playwright CLI
+config, action transcript, snapshots, screenshots, console/network output, and
+fixture logs. Keep it until the failure is understood. Do not put credentials
+in command arguments, screenshots, traces, or generated test files.
+
+For a failing deterministic `heimdal run`, use its report and trace commands.
+For a failing Playwright test, use the Playwright CLI debugger when available:
+
+```bash
+heimdal report --run latest --json
+heimdal trace --run latest
+npx playwright test <spec> --debug=cli
+playwright-cli attach <session-name>
+playwright-cli snapshot --boxes
+playwright-cli console error
+playwright-cli requests
+playwright-cli step-over
+```
+
+## Saving an exploration
+
+`heimdal session save` writes a Markdown transcript. With `--test`, it also
+writes a Playwright TypeScript draft and records semantic locators when the
+Playwright CLI can generate them. Review the draft, replace any TODO locator,
+and add assertions that prove the user-facing outcome. A recorded interaction
+is not a complete test until it has an explicit assertion.
 
 ## Project contract
 
-Projects work without configuration when they have a normal
-`playwright.config.*` and a local Playwright install. Add a root
-`.heimdal.json` when a project needs custom environment names or a non-default
-artifact location:
+Projects with an already-running app only need a URL:
+
+```bash
+heimdal session start --url http://127.0.0.1:3000
+```
+
+Fixture-backed projects can add `.heimdal.json`:
 
 ```json
 {
   "version": 1,
-  "playwright": {
-    "config": "playwright.config.ts",
-    "run_id_env": "APP_PLAYWRIGHT_RUN_ID",
-    "port_env": "APP_PLAYWRIGHT_PORT",
-    "env": {
-      "APP_QA_ARTIFACT_DIR": "${RUN_DIR}"
-    }
-  },
-  "artifacts": {
-    "directory": ".dev/heimdal"
+  "session": {
+    "command": ["npm", "run", "fixture:dev"],
+    "url": "http://127.0.0.1:${PORT}",
+    "run_id_env": "APP_QA_RUN_ID",
+    "port_env": "APP_QA_PORT",
+    "env": { "APP_QA_DB": "${RUN_ID}" },
+    "browser": "chromium",
+    "server_timeout_ms": 45000
   }
 }
 ```
 
-`run_id_env` and `port_env` are optional names consumed by the project's
-Playwright config or fixture. `env` values may use `${RUN_ID}`, `${RUN_DIR}`,
-`${OUTPUT_DIR}`, `${REPORT_DIR}`, `${ROOT}`, `${BRANCH}`, or `${PORT}`.
-`runner`, when needed, is an argument array for the Playwright executable
-before the `test` subcommand; it is not a shell string.
+Commands are argument arrays, not shell strings. Session values may use
+`${RUN_ID}`, `${RUN_DIR}`, `${OUTPUT_DIR}`, `${REPORT_DIR}`, `${ROOT}`,
+`${BRANCH}`, `${PORT}`, `${SESSION}`, and `${URL}`.
+Set `session.runner` to an argument array when the project cannot resolve its
+local `playwright-cli` executable automatically.
 
-The project config should consume Heimdal's `HEIMDAL_RUN_DIR`,
-`HEIMDAL_PLAYWRIGHT_OUTPUT_DIR`, and `HEIMDAL_PLAYWRIGHT_REPORT_DIR` values for
-its Playwright `outputDir` and HTML report folder. Keep app-specific fixture
-selection and web-server lifecycle in that config, not in the CLI.
+## QA rules
+
+- Read the repository's `AGENTS.md` and the docs that own the flow first.
+- Drive real user-facing controls and assert rendered/subscribed outcomes.
+- Do not call reducers, APIs, databases, private hooks, or ad hoc scripts to
+  manufacture a state the user could not reach.
+- Prefer one focused flow over the full suite; do not hide failures with
+  retries or arbitrary waits.
+- Run from the current Git worktree. Keep each session and test artifact set
+  isolated from other worktrees.
+- Use Playwright as the only browser runtime. Do not substitute the Codex
+  in-app browser, MCP browser control, Selenium, or another automation layer.
+- If the fixture cannot start, classify it as an environment/fixture failure
+  and preserve the command and logs.

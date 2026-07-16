@@ -19,9 +19,17 @@ Usage:
   heimdal init [--root DIR] [--force]
   heimdal run [options] [-- PLAYWRIGHT_ARGS...]
   heimdal list [options] [-- PLAYWRIGHT_ARGS...]
+  heimdal session start [options]
+  heimdal session stop [options]
+  heimdal session status [options]
+  heimdal session observe [options]
+  heimdal session screenshot [options]
+  heimdal session diagnose [options]
+  heimdal session save [options]
+  heimdal session <PLAYWRIGHT_CLI_COMMAND> [options]
   heimdal report [--root DIR] [--run ID] [--json]
   heimdal trace [--root DIR] [--run ID] [TRACE]
-  heimdal install [--root DIR] [BROWSER...]
+  heimdal install [--root DIR] [BROWSER...|agent-cli|agent-browser]
   heimdal skill install [--destination DIR] [--force]
   heimdal skill path
 
@@ -33,6 +41,16 @@ Run options:
   --config FILE    Override the Playwright config
   --headed         Forward --headed to Playwright
   --json           Print only the agent-readable result JSON
+
+Session options:
+  --name NAME      Named persistent Playwright agent session
+  --url URL        URL to open, or project session.url
+  --profile DIR    Persistent browser profile directory
+  --browser NAME   Browser engine/channel for Playwright CLI
+  --persistent     Keep browser profile on disk
+  --no-server      Do not start the configured session command
+  --no-boxes       Omit bounding boxes from snapshots
+  --force          Replace an existing Heimdal session state
 
 Examples:
   heimdal doctor
@@ -56,6 +74,8 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return runTests(ctx, args[1:], out, errOut, false)
 	case "list":
 		return runTests(ctx, args[1:], out, errOut, true)
+	case "session":
+		return runSession(ctx, args[1:], out, errOut)
 	case "report":
 		return runReport(args[1:], out, errOut)
 	case "trace":
@@ -114,6 +134,7 @@ func runDoctor(args []string, out, errOut io.Writer) int {
 	report.PlaywrightConfig = project.PlaywrightConfig
 	report.PackageManager = project.PackageManager
 	report.Runner = project.Runner
+	report.AgentRunner = project.AgentRunner
 	report.ArtifactRoot = artifactRoot(project, "")
 	version, versionErr := runCapture(project.Root, append(project.Runner, "--version"), baseEnvironment())
 	if versionErr != nil {
@@ -121,6 +142,16 @@ func runDoctor(args []string, out, errOut io.Writer) int {
 		report.Error = fmt.Sprintf("Playwright is not runnable: %s", versionErr)
 	} else {
 		report.PlaywrightVersion = version
+	}
+	if len(project.AgentRunner) > 0 {
+		agentVersion, agentErr := runCapture(project.Root, append(project.AgentRunner, "--version"), baseEnvironment())
+		if agentErr != nil {
+			report.Warnings = append(report.Warnings, "playwright-cli is not available; run `heimdal install agent-cli`")
+		} else {
+			report.AgentVersion = agentVersion
+		}
+	} else {
+		report.Warnings = append(report.Warnings, "playwright-cli is not available; run `heimdal install agent-cli`")
 	}
 	if report.PlaywrightConfig == "" {
 		report.Warnings = append(report.Warnings, "no playwright.config.* found; Playwright defaults will be used")
@@ -137,7 +168,9 @@ type DoctorReport struct {
 	PlaywrightConfig  string   `json:"playwright_config,omitempty"`
 	PackageManager    string   `json:"package_manager,omitempty"`
 	Runner            []string `json:"runner,omitempty"`
+	AgentRunner       []string `json:"agent_runner,omitempty"`
 	PlaywrightVersion string   `json:"playwright_version,omitempty"`
+	AgentVersion      string   `json:"agent_cli_version,omitempty"`
 	ArtifactRoot      string   `json:"artifact_root,omitempty"`
 	Warnings          []string `json:"warnings,omitempty"`
 	Error             string   `json:"error,omitempty"`
@@ -259,6 +292,19 @@ func runInstall(ctx context.Context, args []string, out, errOut io.Writer) int {
 	project, err := Discover(root)
 	if err != nil {
 		return reportError(false, err, out, errOut)
+	}
+	if len(forwarded) == 1 && (forwarded[0] == "agent-cli" || forwarded[0] == "playwright-cli") {
+		return installAgentCLI(ctx, project, out, errOut)
+	}
+	if len(forwarded) >= 1 && (forwarded[0] == "agent-browser" || forwarded[0] == "playwright-cli-browser") {
+		browser := "chromium"
+		if len(forwarded) > 1 {
+			if len(forwarded) != 2 {
+				return reportError(false, errors.New("agent-browser accepts one browser name"), out, errOut)
+			}
+			browser = forwarded[1]
+		}
+		return installAgentBrowser(ctx, project, browser, out, errOut)
 	}
 	command := append(project.Runner, "install")
 	command = append(command, forwarded...)

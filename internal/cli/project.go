@@ -31,6 +31,7 @@ func Discover(start string) (Project, error) {
 	if err != nil {
 		return Project{}, err
 	}
+	agentRunner := resolveAgentRunner(root, packageManager, cfg.Session.Runner)
 	branch := gitValue(root, "branch", "--show-current")
 	if branch == "" {
 		branch = gitValue(root, "rev-parse", "--short", "HEAD")
@@ -46,6 +47,7 @@ func Discover(start string) (Project, error) {
 		PlaywrightConfig: playwrightConfig,
 		PackageManager:   packageManager,
 		Runner:           runner,
+		AgentRunner:      agentRunner,
 	}, nil
 }
 
@@ -130,6 +132,31 @@ func resolveRunner(root, packageManager string, configured []string) ([]string, 
 		return []string{"npx", "--no-install", "playwright"}, nil
 	default:
 		return nil, fmt.Errorf("unsupported package manager %q", packageManager)
+	}
+}
+
+func resolveAgentRunner(root, packageManager string, configured []string) []string {
+	if len(configured) > 0 {
+		return append([]string(nil), configured...)
+	}
+	local := filepath.Join(root, "node_modules", ".bin", "playwright-cli")
+	if info, err := os.Stat(local); err == nil && !info.IsDir() {
+		return []string{local}
+	}
+	if path, err := exec.LookPath("playwright-cli"); err == nil {
+		return []string{path}
+	}
+	// Keep a package-manager fallback so `heimdal install agent-cli` can add
+	// the official package without requiring a project-specific configuration.
+	switch packageManager {
+	case "pnpm":
+		return []string{"pnpm", "exec", "playwright-cli"}
+	case "yarn":
+		return []string{"yarn", "playwright-cli"}
+	case "bun":
+		return []string{"bunx", "--no-install", "playwright-cli"}
+	default:
+		return []string{"npx", "--no-install", "playwright-cli"}
 	}
 }
 
