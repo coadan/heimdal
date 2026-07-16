@@ -1,0 +1,4 @@
+interface:
+  display_name: "Heimdal Playwright QA"
+  short_description: "Run focused Playwright QA from worktrees"
+  default_prompt: "Use $heimdal-playwright-qa to run focused browser QA and preserve actionable evidence."
