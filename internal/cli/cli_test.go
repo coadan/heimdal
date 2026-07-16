@@ -143,6 +143,7 @@ func TestParseSessionOptions(t *testing.T) {
 		"--headed",
 		"--persistent",
 		"--timeout-ms", "9000",
+		"--verbose",
 		"--",
 		"--depth=4",
 	})
@@ -154,6 +155,9 @@ func TestParseSessionOptions(t *testing.T) {
 	}
 	if !options.Headed || !options.Persistent || options.Timeout != 9*time.Second {
 		t.Fatalf("unexpected session flags: %#v", options)
+	}
+	if !options.Verbose {
+		t.Fatalf("verbose flag was not parsed: %#v", options)
 	}
 	if strings.Join(options.Forwarded, "\x00") != "--depth=4" {
 		t.Fatalf("forwarded session args = %#v", options.Forwarded)
@@ -204,6 +208,85 @@ func TestSessionActionsReobserveStateChanges(t *testing.T) {
 	}
 }
 
+func TestSessionSnapshotArgsBoundDefaultOutput(t *testing.T) {
+	if got, want := strings.Join(sessionSnapshotArgs(false, false, nil), " "), "snapshot --boxes --depth=5"; got != want {
+		t.Fatalf("default snapshot args = %q, want %q", got, want)
+	}
+	if got, want := strings.Join(sessionSnapshotArgs(true, false, nil), " "), "snapshot --depth=5"; got != want {
+		t.Fatalf("no-boxes snapshot args = %q, want %q", got, want)
+	}
+	if got, want := strings.Join(sessionSnapshotArgs(false, true, nil), " "), "snapshot --boxes"; got != want {
+		t.Fatalf("verbose snapshot args = %q, want %q", got, want)
+	}
+	if got, want := strings.Join(sessionSnapshotArgs(false, false, []string{"--depth=9", "--boxes"}), " "), "snapshot --depth=9 --boxes"; got != want {
+		t.Fatalf("forwarded snapshot args = %q, want %q", got, want)
+	}
+}
+
+func TestCompactSessionCommandRetainsUsefulResultsWithoutSecrets(t *testing.T) {
+	compactArgs := compactSessionArgs([]string{"fill", "e5", "private token"})
+	if strings.Join(compactArgs, " ") != "fill e5 <text:13 chars>" {
+		t.Fatalf("compact command args = %#v", compactArgs)
+	}
+	fill := compactSessionCommand(sessionCommandResult{Args: []string{"fill", "e5", "private token"}}, "page.getByLabel('Token')")
+	if strings.Contains(fill, "private token") || !strings.Contains(fill, "<text:13 chars>") {
+		t.Fatalf("fill output leaked or omitted redaction: %q", fill)
+	}
+	find := compactSessionCommand(sessionCommandResult{
+		Args:   []string{"find", "Save"},
+		Stdout: "Found 1 match for \"Save\":\n\n- button \"Save\" [ref=e3]",
+	}, "")
+	for _, expected := range []string{"find Save", "Found 1 match", "button \"Save\""} {
+		if !strings.Contains(find, expected) {
+			t.Fatalf("find output omitted %q: %q", expected, find)
+		}
+	}
+}
+
+func TestDiagnosticIssues(t *testing.T) {
+	issues := diagnosticIssues(
+		"Total messages: 7 (Errors: 2, Warnings: 0)",
+		"[FAILED] http://127.0.0.1:4000/assets/app.js net::ERR_CONNECTION_REFUSED",
+	)
+	if strings.Join(issues, "\n") != "console errors: 2\nfailed network requests detected" {
+		t.Fatalf("diagnostic issues = %#v", issues)
+	}
+}
+
+func TestDiscoverSessionUsesPersistedRootOutsideWorktree(t *testing.T) {
+	t.Setenv("HEIMDAL_STATE_DIR", t.TempDir())
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	state := SessionState{
+		SchemaVersion: sessionStateVersion,
+		Name:          "registry-demo",
+		RunID:         "run-1",
+		Root:          root,
+		SessionDir:    filepath.Join(root, defaultArtifactDir, "sessions", "registry-demo", "run-1"),
+		StartedAt:     time.Now().UTC(),
+	}
+	if err := os.MkdirAll(state.SessionDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	statePath := filepath.Join(filepath.Dir(state.SessionDir), "session.json")
+	if err := writeSessionState(statePath, state); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeSessionIndex(state); err != nil {
+		t.Fatal(err)
+	}
+
+	project, got, gotPath, err := discoverSession(SessionOptions{Name: state.Name})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if project.Root != root || got.Root != root || gotPath != statePath {
+		t.Fatalf("discovered session = root %q, state root %q, path %q; want %q, %q, %q", project.Root, got.Root, gotPath, root, root, statePath)
+	}
+}
+
 func TestSessionTestUsesRecordedSemanticLocator(t *testing.T) {
 	state := SessionState{Name: "demo", URL: "http://127.0.0.1:4000"}
 	actions := []SessionActionRecord{
@@ -222,7 +305,24 @@ func TestSessionTestUsesRecordedSemanticLocator(t *testing.T) {
 	}
 }
 
+func TestSessionTestOmitsExplorationCommands(t *testing.T) {
+	state := SessionState{Name: "demo", URL: "http://127.0.0.1:4000"}
+	actions := []SessionActionRecord{
+		{Sequence: 1, Args: []string{"find", "Save"}, Stdout: "Found 1 match", ExitCode: 0},
+		{Sequence: 2, Args: []string{"tab-list"}, Stdout: "- 0: current", ExitCode: 0},
+		{Sequence: 3, Args: []string{"click", "e5"}, Locator: "page.getByRole('button', { name: 'Save' })", ExitCode: 0},
+	}
+	testCode := sessionTest(state, actions)
+	if strings.Contains(testCode, "Heimdal action") || strings.Contains(testCode, "find Save") || strings.Contains(testCode, "tab-list") {
+		t.Fatalf("generated test retained exploration commands:\n%s", testCode)
+	}
+	if !strings.Contains(testCode, "getByRole('button', { name: 'Save' }).click()") {
+		t.Fatalf("generated test omitted interaction:\n%s", testCode)
+	}
+}
+
 func TestStartSessionUsesPersistentAgentCLIState(t *testing.T) {
+	t.Setenv("HEIMDAL_STATE_DIR", t.TempDir())
 	root := t.TempDir()
 	runner := filepath.Join(root, "fake-playwright-cli")
 	if err := os.WriteFile(runner, []byte("#!/bin/sh\nprintf 'fake playwright cli\\n'\n"), 0o755); err != nil {

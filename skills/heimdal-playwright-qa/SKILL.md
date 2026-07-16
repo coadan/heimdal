@@ -17,7 +17,7 @@ needs investigation, or an agent must explore before writing a test:
 
 ```bash
 heimdal doctor --json
-heimdal session start --name <short-worktree-name> --headed
+heimdal session start --root <worktree> --name <short-worktree-name> --headed
 heimdal session observe
 ```
 
@@ -56,8 +56,12 @@ heimdal session stop
 
 `observe` returns an accessibility snapshot with element refs and bounding
 boxes. State-changing actions automatically return the post-action snapshot
-with boxes and append a JSONL record plus stdout/stderr files under the session
-artifact directory; use explicit `observe` after read-only commands.
+with boxes. Read-only commands return their useful result. Heimdal keeps the
+default response compact by using Playwright raw output and snapshot depth 5;
+use `--verbose` on any session command when the full Playwright CLI response is
+needed. All stdout/stderr, snapshots, and screenshots are still preserved in
+the session artifact directory. Use explicit `observe` after read-only
+commands when you need fresh refs.
 
 Use refs from the latest observation (`e12`, `e5`, and so on). Re-observe after
 navigation or a DOM mutation because refs are invalidated when the page changes.
@@ -68,6 +72,7 @@ interaction. Forward Playwright CLI-specific options after `--`, for example:
 ```bash
 heimdal session observe -- --depth=4
 heimdal session screenshot -- --full-page
+heimdal session click e12 --verbose
 ```
 
 Coordinate actions are a fallback for canvas/custom widgets. Record the
@@ -77,7 +82,9 @@ use coordinates when a semantic ref is available.
 ## Diagnosis and evidence
 
 For an interactive failure, inspect the machine-readable session result and
-preserved evidence:
+preserved evidence. `status` and all other session commands can resolve a
+named session from the root recorded at `start`, even when the agent's current
+directory has changed:
 
 ```bash
 heimdal session status --json

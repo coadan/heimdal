@@ -43,6 +43,7 @@ Run options:
   --json           Print only the agent-readable result JSON
 
 Session options:
+  --root DIR       Worktree root; persisted on session start
   --name NAME      Named persistent Playwright agent session
   --url URL        URL to open, or project session.url
   --profile DIR    Persistent browser profile directory
@@ -50,6 +51,7 @@ Session options:
   --persistent     Keep browser profile on disk
   --no-server      Do not start the configured session command
   --no-boxes       Omit bounding boxes from snapshots
+  --verbose        Show complete Playwright CLI output
   --force          Replace an existing Heimdal session state
 
 Examples:

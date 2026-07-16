@@ -36,7 +36,7 @@ heimdal doctor --json
 heimdal install agent-cli
 heimdal install agent-browser chromium
 heimdal install chromium
-heimdal session start --name combat --headed
+heimdal session start --root /path/to/worktree --name combat --headed
 heimdal session observe
 heimdal session click e12
 heimdal session diagnose --json
@@ -48,12 +48,21 @@ heimdal trace --run latest
 ```
 
 `heimdal session start` keeps a named Playwright browser alive between CLI
-calls. `observe` captures an accessibility snapshot with refs and bounding
-boxes; actions such as `click`, `fill`, `goto`, `press`, and `screenshot` are
-forwarded to Playwright CLI and produce a per-action transcript. State-changing
-actions automatically return a fresh snapshot with boxes; call `observe`
-explicitly after read-only commands. Re-observe after navigation or DOM
-mutation because refs are scoped to the snapshot that created them.
+calls. `--root` selects the worktree and is persisted for that named session,
+so later commands can be run from another directory; pass `--root` again when
+the same name exists in multiple worktrees. `observe` captures an accessibility
+snapshot with refs and bounding boxes; state-changing actions automatically
+return a fresh snapshot with boxes. Read-only commands retain their useful
+result, while the default response removes Playwright protocol chatter and
+limits snapshots to depth 5. Use `--verbose` on any session command to show
+the complete Playwright CLI output, or forward options such as
+`-- --depth=10` when a larger snapshot is needed.
+
+All command stdout/stderr, snapshots, and screenshots remain in the session
+artifact directory even when the terminal response is compact. Re-observe
+after navigation or DOM mutation because refs are scoped to the snapshot that
+created them. `diagnose` reports console errors, failed network requests, and
+an exited fixture process as issues and returns a non-zero status.
 
 Session artifacts live under `.dev/heimdal/sessions/<name>/<run-id>/` and
 include the generated Playwright CLI config, action logs, snapshots, console

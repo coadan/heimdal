@@ -14,13 +14,15 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
 const (
-	sessionStateVersion = 1
-	defaultSessionName  = "default"
-	defaultServerWait   = 45 * time.Second
+	sessionStateVersion  = 1
+	defaultSessionName   = "default"
+	defaultServerWait    = 45 * time.Second
+	defaultSnapshotDepth = 5
 )
 
 type SessionOptions struct {
@@ -38,6 +40,7 @@ type SessionOptions struct {
 	NoServer   bool
 	Force      bool
 	NoBoxes    bool
+	Verbose    bool
 	Timeout    time.Duration
 	Forwarded  []string
 }
@@ -95,8 +98,11 @@ type SessionResponse struct {
 	Action        int               `json:"action,omitempty"`
 	Command       []string          `json:"command,omitempty"`
 	Output        string            `json:"output,omitempty"`
+	Snapshot      string            `json:"snapshot,omitempty"`
 	Stderr        string            `json:"stderr,omitempty"`
 	Error         string            `json:"error,omitempty"`
+	Issues        []string          `json:"issues,omitempty"`
+	Server        string            `json:"server,omitempty"`
 	Artifacts     map[string]string `json:"artifacts,omitempty"`
 	State         *SessionState     `json:"state,omitempty"`
 }
@@ -161,7 +167,7 @@ Usage:
   heimdal session <PLAYWRIGHT_CLI_COMMAND> [options]
 
 Start options:
-  --root DIR       Worktree root
+  --root DIR       Worktree root (persisted by start for named-session lookup)
   --name NAME      Named persistent agent session (default: default)
   --url URL        URL to open, or session.url from .heimdal.json
   --run-id ID      Session artifact identity
@@ -173,6 +179,7 @@ Start options:
   --browser NAME   Playwright browser engine/channel
   --no-server      Skip the configured session.command
   --no-boxes       Omit bounding boxes from snapshots
+  --verbose        Include full Playwright CLI output; default output is compact
   --force          Replace existing Heimdal session state
   --json           Print only agent-readable JSON
 
@@ -286,6 +293,11 @@ func startSession(ctx context.Context, project Project, options SessionOptions, 
 		stopSessionResources(ctx, project, state)
 		return reportError(options.JSON, err, out, errOut)
 	}
+	if err := writeSessionIndex(state); err != nil {
+		stopSessionResources(ctx, project, state)
+		markSessionStopped(statePath, &state)
+		return reportError(options.JSON, fmt.Errorf("persist session root lookup: %w", err), out, errOut)
+	}
 
 	openArgs := []string{"open"}
 	if state.URL != "" {
@@ -300,22 +312,32 @@ func startSession(ctx context.Context, project Project, options SessionOptions, 
 	if options.Profile != "" {
 		openArgs = append(openArgs, "--profile="+absoluteFromRoot(project.Root, options.Profile))
 	}
-	open, openErr := runSessionCommand(ctx, project, &state, statePath, openArgs, "")
+	open, openErr := runSessionCommandMode(ctx, project, &state, statePath, openArgs, "", !options.Verbose)
 	if openErr != nil {
 		stopSessionResources(ctx, project, state)
 		markSessionStopped(statePath, &state)
-		return printSessionResponse(out, errOut, sessionResponse(state, open, openErr), options.JSON)
+		response := sessionResponse(state, open, openErr)
+		if !options.Verbose {
+			response.Output = compactSessionCommand(open, "")
+			response.Stderr = compactCLIOutput(open.Stderr)
+		}
+		return printSessionResponse(out, errOut, response, options.JSON)
 	}
 
-	observe, observeErr := runSessionCommand(ctx, project, &state, statePath, sessionSnapshotArgs(options.NoBoxes), "")
-	output := joinOutputs(open.Stdout, observe.Stdout)
+	observeArgs := sessionSnapshotArgs(options.NoBoxes, options.Verbose, nil)
+	observe, observeErr := runSessionCommandMode(ctx, project, &state, statePath, observeArgs, "", !options.Verbose)
 	if observeErr != nil {
 		stopSessionResources(ctx, project, state)
 		markSessionStopped(statePath, &state)
 	}
 	response := sessionResponse(state, observe, observeErr)
 	response.Status = "started"
-	response.Output = output
+	if options.Verbose {
+		response.Output = joinOutputs(open.Stdout, observe.Stdout)
+	} else {
+		response.Output = fmt.Sprintf("opened %s", state.URL)
+		response.Snapshot = observe.Stdout
+	}
 	if observeErr != nil {
 		response.Status = "failed"
 	}
@@ -330,11 +352,7 @@ func runSessionStop(ctx context.Context, args []string, out, errOut io.Writer) i
 	if len(options.Forwarded) > 0 {
 		return reportError(options.JSON, errors.New("session stop does not accept Playwright command arguments"), out, errOut)
 	}
-	project, err := Discover(options.Root)
-	if err != nil {
-		return reportError(options.JSON, err, out, errOut)
-	}
-	state, statePath, err := loadSession(project, options)
+	project, state, statePath, err := discoverSession(options)
 	if err != nil {
 		return reportError(options.JSON, err, out, errOut)
 	}
@@ -348,13 +366,21 @@ func runSessionStop(ctx context.Context, args []string, out, errOut io.Writer) i
 	stopped := time.Now().UTC()
 	state.StoppedAt = &stopped
 	stateWriteErr := writeSessionState(statePath, state)
+	indexWriteErr := writeSessionIndex(state)
 	response := sessionResponse(state, closeResult, closeErr)
 	response.Status = "stopped"
+	if !options.Verbose {
+		response.Output = compactSessionCommand(closeResult, "")
+		response.Stderr = compactCLIOutput(closeResult.Stderr)
+	}
 	if closeErr != nil {
 		response.Status = "failed"
 	} else if stateWriteErr != nil {
 		response.Status = "failed"
 		response.Error = stateWriteErr.Error()
+	} else if indexWriteErr != nil {
+		response.Status = "failed"
+		response.Error = indexWriteErr.Error()
 	}
 	return printSessionResponse(out, errOut, response, options.JSON)
 }
@@ -367,20 +393,21 @@ func runSessionStatus(args []string, out, errOut io.Writer) int {
 	if len(options.Forwarded) > 0 {
 		return reportError(options.JSON, errors.New("session status does not accept Playwright command arguments"), out, errOut)
 	}
-	project, err := Discover(options.Root)
-	if err != nil {
-		return reportError(options.JSON, err, out, errOut)
-	}
-	state, _, err := loadSession(project, options)
+	_, state, _, err := discoverSession(options)
 	if err != nil {
 		return reportError(options.JSON, err, out, errOut)
 	}
 	response := sessionResponse(state, sessionCommandResult{}, nil)
 	if state.StoppedAt == nil {
-		response.Status = "active"
+		if response.Server == "stopped" {
+			response.Status = "issues"
+		} else {
+			response.Status = "active"
+		}
 	} else {
 		response.Status = "stopped"
 	}
+	response.State = &state
 	return printSessionResponse(out, errOut, response, options.JSON)
 }
 
@@ -389,11 +416,7 @@ func runSessionAction(ctx context.Context, action string, args []string, out, er
 	if err != nil {
 		return reportError(options.JSON, err, out, errOut)
 	}
-	project, err := Discover(options.Root)
-	if err != nil {
-		return reportError(options.JSON, err, out, errOut)
-	}
-	state, statePath, err := loadSession(project, options)
+	project, state, statePath, err := discoverSession(options)
 	if err != nil {
 		return reportError(options.JSON, err, out, errOut)
 	}
@@ -402,31 +425,47 @@ func runSessionAction(ctx context.Context, action string, args []string, out, er
 	}
 
 	logicalArgs := append([]string{action}, options.Forwarded...)
-	if action == "snapshot" && !options.NoBoxes && !containsFlag(options.Forwarded, "--boxes") {
-		logicalArgs = append(logicalArgs, "--boxes")
+	if action == "snapshot" {
+		logicalArgs = sessionSnapshotArgs(options.NoBoxes, options.Verbose, options.Forwarded)
 	}
 	locator := ""
 	if isLocatorAction(action, logicalArgs) {
 		locator = generateSessionLocator(ctx, project, state, logicalArgs[1])
 	}
-	result, commandErr := runSessionCommand(ctx, project, &state, statePath, logicalArgs, locator)
+	result, commandErr := runSessionCommandMode(ctx, project, &state, statePath, logicalArgs, locator, !options.Verbose)
 	output := result.Stdout
 	stderr := result.Stderr
+	var snapshot string
 	if commandErr == nil && shouldObserveAfterSessionAction(action) {
-		observationArgs := sessionSnapshotArgs(options.NoBoxes)
-		observation, observationErr := runSessionCommand(ctx, project, &state, statePath, observationArgs, "")
-		output = joinOutputs(output, observation.Stdout)
+		observationArgs := sessionSnapshotArgs(options.NoBoxes, options.Verbose, nil)
+		observation, observationErr := runSessionCommandMode(ctx, project, &state, statePath, observationArgs, "", !options.Verbose)
+		if options.Verbose {
+			output = joinOutputs(output, observation.Stdout)
+		} else {
+			snapshot = observation.Stdout
+		}
 		stderr = joinOutputs(stderr, observation.Stderr)
 		if observationErr != nil {
 			commandErr = fmt.Errorf("post-action observation failed: %w", observationErr)
 		}
 	}
 	response := sessionResponse(state, result, commandErr)
-	response.Output = output
-	response.Stderr = stderr
+	if options.Verbose {
+		response.Output = output
+		response.Stderr = stderr
+	} else {
+		response.Command = compactSessionArgs(result.Args)
+		response.Output = compactSessionCommand(result, locator)
+		response.Snapshot = snapshot
+		response.Stderr = compactCLIOutput(stderr)
+	}
+	if action == "snapshot" && !options.Verbose {
+		response.Output = "observed"
+		response.Snapshot = result.Stdout
+	}
 	if commandErr != nil {
 		response.Status = "failed"
-	} else {
+	} else if response.Status != "issues" {
 		response.Status = "passed"
 	}
 	return printSessionResponse(out, errOut, response, options.JSON)
@@ -440,11 +479,7 @@ func runSessionDiagnose(ctx context.Context, args []string, out, errOut io.Write
 	if len(options.Forwarded) > 0 {
 		return reportError(options.JSON, errors.New("session diagnose does not accept Playwright command arguments"), out, errOut)
 	}
-	project, err := Discover(options.Root)
-	if err != nil {
-		return reportError(options.JSON, err, out, errOut)
-	}
-	state, statePath, err := loadSession(project, options)
+	project, state, statePath, err := discoverSession(options)
 	if err != nil {
 		return reportError(options.JSON, err, out, errOut)
 	}
@@ -452,23 +487,38 @@ func runSessionDiagnose(ctx context.Context, args []string, out, errOut io.Write
 		return reportError(options.JSON, fmt.Errorf("session %q is stopped", state.Name), out, errOut)
 	}
 
-	commands := [][]string{{"console", "error"}, {"requests"}, sessionSnapshotArgs(options.NoBoxes)}
+	commands := [][]string{{"console", "error"}, {"requests"}, sessionSnapshotArgs(options.NoBoxes, options.Verbose, nil)}
 	var output []string
+	var snapshot string
 	var last sessionCommandResult
 	var firstErr error
+	var diagnosticOutput []string
 	for _, command := range commands {
-		result, commandErr := runSessionCommand(ctx, project, &state, statePath, command, "")
+		result, commandErr := runSessionCommandMode(ctx, project, &state, statePath, command, "", !options.Verbose)
 		last = result
 		if commandErr != nil && firstErr == nil {
 			firstErr = commandErr
 		}
-		output = append(output, fmt.Sprintf("$ %s\n%s", strings.Join(command, " "), joinOutputs(result.Stdout, result.Stderr)))
+		if command[0] == "snapshot" && !options.Verbose {
+			snapshot = result.Stdout
+			continue
+		}
+		diagnosticOutput = append(diagnosticOutput, result.Stdout, result.Stderr)
+		if options.Verbose {
+			output = append(output, fmt.Sprintf("$ %s\n%s", strings.Join(command, " "), joinOutputs(result.Stdout, result.Stderr)))
+		} else {
+			output = append(output, compactDiagnostic(command, result))
+		}
 	}
 	response := sessionResponse(state, last, firstErr)
 	response.Command = []string{"diagnose"}
 	response.Output = strings.TrimSpace(strings.Join(output, "\n\n"))
+	response.Snapshot = snapshot
+	response.Issues = append(response.Issues, diagnosticIssues(diagnosticOutput...)...)
 	if firstErr != nil {
 		response.Status = "failed"
+	} else if len(response.Issues) > 0 {
+		response.Status = "issues"
 	} else {
 		response.Status = "passed"
 	}
@@ -480,11 +530,7 @@ func runSessionSave(args []string, out, errOut io.Writer) int {
 	if err != nil {
 		return reportError(options.JSON, err, out, errOut)
 	}
-	project, err := Discover(options.Root)
-	if err != nil {
-		return reportError(options.JSON, err, out, errOut)
-	}
-	state, _, err := loadSession(project, options.SessionOptions)
+	project, state, _, err := discoverSession(options.SessionOptions)
 	if err != nil {
 		return reportError(options.JSON, err, out, errOut)
 	}
@@ -586,6 +632,8 @@ func parseSessionOptions(args []string) (SessionOptions, error) {
 			options.Force = true
 		case "--no-boxes":
 			options.NoBoxes = true
+		case "--verbose":
+			options.Verbose = true
 		case "--timeout-ms":
 			value, next, err := nextValue(args, i, arg)
 			if err != nil {
@@ -654,10 +702,16 @@ func sessionServerPlan(project Project, options SessionOptions, name, runID, run
 	return url, port, command, nil
 }
 
-func sessionSnapshotArgs(noBoxes bool) []string {
+func sessionSnapshotArgs(noBoxes, verbose bool, forwarded []string) []string {
 	args := []string{"snapshot"}
+	args = append(args, forwarded...)
 	if !noBoxes {
-		args = append(args, "--boxes")
+		if !containsFlag(forwarded, "--boxes") {
+			args = append(args, "--boxes")
+		}
+	}
+	if !verbose && !containsFlag(forwarded, "--depth") {
+		args = append(args, fmt.Sprintf("--depth=%d", defaultSnapshotDepth))
 	}
 	return args
 }
@@ -769,8 +823,12 @@ func waitForSessionURL(parent context.Context, url string, timeout time.Duration
 }
 
 func runSessionCommand(ctx context.Context, project Project, state *SessionState, statePath string, logicalArgs []string, locator string) (sessionCommandResult, error) {
+	return runSessionCommandMode(ctx, project, state, statePath, logicalArgs, locator, false)
+}
+
+func runSessionCommandMode(ctx context.Context, project Project, state *SessionState, statePath string, logicalArgs []string, locator string, raw bool) (sessionCommandResult, error) {
 	started := time.Now().UTC()
-	command := agentSessionCommand(project, *state, logicalArgs)
+	command := agentSessionCommand(project, *state, logicalArgs, raw)
 	var stdout, stderr bytes.Buffer
 	cmd := exec.CommandContext(ctx, command[0], command[1:]...)
 	cmd.Dir = project.Root
@@ -858,8 +916,11 @@ func normalizeGeneratedLocator(output string) string {
 	return ""
 }
 
-func agentSessionCommand(project Project, state SessionState, args []string) []string {
+func agentSessionCommand(project Project, state SessionState, args []string, raw bool) []string {
 	command := append([]string(nil), project.AgentRunner...)
+	if raw {
+		command = append(command, "--raw")
+	}
 	if len(args) > 0 && args[0] == "open" {
 		command = append(command, "--config="+state.CLIConfig)
 	}
@@ -999,7 +1060,7 @@ func readSessionActions(path string) ([]SessionActionRecord, error) {
 
 func stopSessionResources(ctx context.Context, project Project, state SessionState) {
 	if state.StoppedAt == nil && len(project.AgentRunner) > 0 {
-		command := agentSessionCommand(project, state, []string{"close"})
+		command := agentSessionCommand(project, state, []string{"close"}, false)
 		cmd := exec.CommandContext(ctx, command[0], command[1:]...)
 		cmd.Dir = project.Root
 		cmd.Env = sessionEnvironment(project, state)
@@ -1012,6 +1073,7 @@ func markSessionStopped(path string, state *SessionState) {
 	stopped := time.Now().UTC()
 	state.StoppedAt = &stopped
 	_ = writeSessionState(path, *state)
+	_ = writeSessionIndex(*state)
 }
 
 func stopSessionServer(pid int) {
@@ -1036,7 +1098,7 @@ func sessionResponse(state SessionState, result sessionCommandResult, commandErr
 		Command:       result.Args,
 		Output:        result.Stdout,
 		Stderr:        result.Stderr,
-		State:         &state,
+		Server:        sessionServerStatus(state),
 		Artifacts: map[string]string{
 			"directory":  state.SessionDir,
 			"state":      filepath.Join(filepath.Dir(state.SessionDir), "session.json"),
@@ -1047,8 +1109,162 @@ func sessionResponse(state SessionState, result sessionCommandResult, commandErr
 	if commandErr != nil {
 		response.Status = "failed"
 		response.Error = commandErr.Error()
+	} else if response.Server == "stopped" && state.StoppedAt == nil {
+		response.Status = "issues"
+		response.Issues = append(response.Issues, "fixture process is not running")
 	}
 	return response
+}
+
+func sessionServerStatus(state SessionState) string {
+	if state.ServerPID <= 0 {
+		return ""
+	}
+	if state.StoppedAt != nil {
+		return "stopped"
+	}
+	process, err := os.FindProcess(state.ServerPID)
+	if err != nil {
+		return "stopped"
+	}
+	if err := process.Signal(syscall.Signal(0)); err != nil {
+		return "stopped"
+	}
+	return "running"
+}
+
+func compactSessionCommand(result sessionCommandResult, locator string) string {
+	if len(result.Args) == 0 {
+		return ""
+	}
+	command := result.Args[0]
+	switch command {
+	case "open":
+		if len(result.Args) > 1 {
+			return "opened " + result.Args[1]
+		}
+		return "opened"
+	case "close":
+		return "closed"
+	case "screenshot":
+		if line := firstOutputLine(result.Stdout, "Screenshot"); line != "" {
+			return line
+		}
+		if output := compactCLIOutput(joinOutputs(result.Stdout, result.Stderr)); output != "" {
+			return output
+		}
+		return "screenshot saved"
+	case "snapshot":
+		return "observed"
+	}
+	args := compactSessionArgs(result.Args)
+	output := commandString(args)
+	if locator != "" {
+		output += "\nlocator: " + locator
+	}
+	if !shouldObserveAfterSessionAction(command) {
+		if detail := compactCLIOutput(joinOutputs(result.Stdout, result.Stderr)); detail != "" {
+			output += "\n" + detail
+		}
+	}
+	return output
+}
+
+func compactSessionArgs(args []string) []string {
+	compact := append([]string(nil), args...)
+	if len(compact) == 0 {
+		return compact
+	}
+	switch compact[0] {
+	case "fill":
+		if len(compact) > 2 {
+			compact[2] = fmt.Sprintf("<text:%d chars>", len(compact[2]))
+		}
+	case "type", "upload":
+		if len(compact) > 1 {
+			compact[1] = fmt.Sprintf("<text:%d chars>", len(compact[1]))
+		}
+	}
+	return compact
+}
+
+func firstOutputLine(output, contains string) string {
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.Contains(line, contains) {
+			return line
+		}
+	}
+	return ""
+}
+
+func compactCLIOutput(output string) string {
+	output = strings.TrimSpace(output)
+	if output == "" {
+		return ""
+	}
+	if start := strings.Index(output, "### Result"); start >= 0 {
+		output = strings.TrimSpace(output[start+len("### Result"):])
+	}
+	if end := strings.Index(output, "\n### Ran Playwright code"); end >= 0 {
+		output = strings.TrimSpace(output[:end])
+	}
+	return truncateDisplay(output, 6000)
+}
+
+func compactDiagnostic(command []string, result sessionCommandResult) string {
+	label := strings.Join(command, " ")
+	output := compactCLIOutput(joinOutputs(result.Stdout, result.Stderr))
+	if output == "" {
+		return label + ": none"
+	}
+	return label + ":\n" + output
+}
+
+func diagnosticIssues(outputs ...string) []string {
+	var issues []string
+	for _, output := range outputs {
+		if count := parseDiagnosticCount(output, "Errors:"); count > 0 {
+			issues = appendUnique(issues, fmt.Sprintf("console errors: %d", count))
+		}
+		if strings.Contains(output, "[FAILED]") || strings.Contains(output, "net::ERR_") {
+			issues = appendUnique(issues, "failed network requests detected")
+		}
+	}
+	return issues
+}
+
+func parseDiagnosticCount(output, marker string) int {
+	index := strings.Index(output, marker)
+	if index < 0 {
+		return 0
+	}
+	value := strings.TrimLeft(output[index+len(marker):], " \t")
+	end := 0
+	for end < len(value) && value[end] >= '0' && value[end] <= '9' {
+		end++
+	}
+	count, err := strconv.Atoi(value[:end])
+	if err != nil {
+		return 0
+	}
+	return count
+}
+
+func appendUnique(values []string, value string) []string {
+	for _, existing := range values {
+		if existing == value {
+			return values
+		}
+	}
+	return append(values, value)
+}
+
+func truncateDisplay(value string, max int) string {
+	if len(value) <= max {
+		return value
+	}
+	return value[:max] + "\n… output truncated; see session artifacts"
 }
 
 func printSessionResponse(out, errOut io.Writer, response SessionResponse, asJSON bool) int {
@@ -1057,7 +1273,7 @@ func printSessionResponse(out, errOut io.Writer, response SessionResponse, asJSO
 			fmt.Fprintln(errOut, "heimdal:", err)
 			return 1
 		}
-		if response.Status == "failed" {
+		if response.Status == "failed" || response.Status == "issues" {
 			return 1
 		}
 		return 0
@@ -1067,6 +1283,10 @@ func printSessionResponse(out, errOut io.Writer, response SessionResponse, asJSO
 		if !strings.HasSuffix(response.Output, "\n") {
 			fmt.Fprintln(out)
 		}
+	}
+	if response.Snapshot != "" {
+		fmt.Fprintln(out, "Snapshot:")
+		fmt.Fprintln(out, response.Snapshot)
 	}
 	if response.Stderr != "" {
 		fmt.Fprint(errOut, response.Stderr)
@@ -1082,8 +1302,17 @@ func printSessionResponse(out, errOut io.Writer, response SessionResponse, asJSO
 		fmt.Fprintf(out, "  url: %s\n", response.URL)
 	}
 	fmt.Fprintf(out, "  artifacts: %s\n", response.Artifacts["directory"])
+	if response.Server != "" {
+		fmt.Fprintf(out, "  server: %s\n", response.Server)
+	}
+	for _, issue := range response.Issues {
+		fmt.Fprintf(errOut, "heimdal: issue: %s\n", issue)
+	}
 	if response.Error != "" {
 		fmt.Fprintf(errOut, "heimdal: %s\n", response.Error)
+		return 1
+	}
+	if response.Status == "issues" {
 		return 1
 	}
 	return 0
@@ -1143,7 +1372,7 @@ func sessionActionTestLines(action SessionActionRecord) []string {
 		return quoteTypeScript(action.Args[index])
 	}
 	switch command {
-	case "open", "snapshot", "screenshot", "console", "requests", "highlight":
+	case "open", "snapshot", "screenshot", "console", "requests", "highlight", "find", "tab-list", "request", "request-headers", "request-body", "response-headers", "response-body", "cookie-list", "cookie-get", "localstorage-list", "localstorage-get", "sessionstorage-list", "sessionstorage-get":
 		return nil
 	case "goto":
 		return []string{"await page.goto(" + quoted(1) + ");"}
