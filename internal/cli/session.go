@@ -799,6 +799,7 @@ func startSessionServer(project Project, state SessionState) (sessionServer, err
 	cmd := exec.Command(state.ServerCommand[0], state.ServerCommand[1:]...)
 	cmd.Dir = project.Root
 	cmd.Env = sessionEnvironment(project, state)
+	configureDetachedProcess(cmd)
 	cmd.Stdout = stdoutFile
 	cmd.Stderr = stderrFile
 	if err := cmd.Start(); err != nil {
@@ -1089,12 +1090,7 @@ func markSessionStopped(path string, state *SessionState) {
 }
 
 func stopSessionServer(pid int) {
-	if pid <= 0 {
-		return
-	}
-	if process, err := os.FindProcess(pid); err == nil {
-		_ = process.Kill()
-	}
+	stopDetachedProcess(pid)
 }
 
 func sessionResponse(state SessionState, result sessionCommandResult, commandErr error) SessionResponse {
