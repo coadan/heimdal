@@ -34,14 +34,22 @@ type PlaywrightConfig struct {
 // CLI; Heimdal only supplies the server command, URL, environment, and
 // optional executable override.
 type SessionConfig struct {
-	Runner          []string          `json:"runner,omitempty"`
-	Command         []string          `json:"command,omitempty"`
-	URL             string            `json:"url,omitempty"`
-	RunIDEnv        string            `json:"run_id_env,omitempty"`
-	PortEnv         string            `json:"port_env,omitempty"`
-	Env             map[string]string `json:"env,omitempty"`
-	Browser         string            `json:"browser,omitempty"`
-	ServerTimeoutMS int               `json:"server_timeout_ms,omitempty"`
+	Runner               []string             `json:"runner,omitempty"`
+	Command              []string             `json:"command,omitempty"`
+	URL                  string               `json:"url,omitempty"`
+	RunIDEnv             string               `json:"run_id_env,omitempty"`
+	PortEnv              string               `json:"port_env,omitempty"`
+	Env                  map[string]string    `json:"env,omitempty"`
+	Browser              string               `json:"browser,omitempty"`
+	BrowserLaunchOptions BrowserLaunchOptions `json:"browser_launch_options,omitempty"`
+	ServerTimeoutMS      int                  `json:"server_timeout_ms,omitempty"`
+}
+
+// BrowserLaunchOptions is the small project-owned subset of Playwright launch
+// options that Heimdal needs to pass through to the official agent CLI.
+type BrowserLaunchOptions struct {
+	Args    []string `json:"args,omitempty"`
+	Channel string   `json:"channel,omitempty"`
 }
 
 type ArtifactConfig struct {

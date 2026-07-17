@@ -173,7 +173,12 @@ func TestResolveAgentRunnerPrefersConfiguredRunner(t *testing.T) {
 
 func TestWriteAgentCLIConfig(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "playwright-cli.json")
-	if err := writeAgentCLIConfig(path, SessionOptions{Browser: "chromium", Profile: "/tmp/profile"}, SessionConfig{}); err != nil {
+	if err := writeAgentCLIConfig(path, SessionOptions{Browser: "chromium", Profile: "/tmp/profile"}, SessionConfig{
+		BrowserLaunchOptions: BrowserLaunchOptions{
+			Args:    []string{"--enable-gpu", "--ignore-gpu-blocklist"},
+			Channel: "chrome",
+		},
+	}); err != nil {
 		t.Fatal(err)
 	}
 	contents, err := os.ReadFile(path)
@@ -186,6 +191,9 @@ func TestWriteAgentCLIConfig(t *testing.T) {
 	}
 	if decoded.OutputDir != filepath.Dir(path) || decoded.Browser == nil || decoded.Browser.BrowserName != "chromium" {
 		t.Fatalf("unexpected agent CLI config: %#v", decoded)
+	}
+	if decoded.Browser.LaunchOptions == nil || strings.Join(decoded.Browser.LaunchOptions.Args, ",") != "--enable-gpu,--ignore-gpu-blocklist" || decoded.Browser.LaunchOptions.Channel != "chrome" {
+		t.Fatalf("browser launch options = %#v", decoded.Browser.LaunchOptions)
 	}
 }
 

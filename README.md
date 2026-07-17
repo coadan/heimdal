@@ -98,6 +98,9 @@ For a fixture-backed project, add a `session` object to `.heimdal.json`:
       "APP_QA_DB": "${RUN_ID}"
     },
     "browser": "chromium",
+    "browser_launch_options": {
+      "args": ["--enable-gpu", "--ignore-gpu-blocklist"]
+    },
     "server_timeout_ms": 45000
   }
 }
@@ -108,7 +111,11 @@ Commands are argument arrays, not shell strings. `${RUN_ID}`, `${RUN_DIR}`,
 `${SESSION}`, and `${URL}` are available in session URLs and environment
 values. Set `session.runner` to an argument array if the local
 `playwright-cli` executable cannot be discovered. Keep project-specific
-fixture switches in the contract; keep browser actions in Playwright.
+fixture switches in the contract; keep browser actions in Playwright. The
+optional `browser_launch_options` fields are passed to Playwright CLI as
+`browser.launchOptions`; use `args` for Chromium flags and `channel` when a
+branded Chromium channel is required. Custom browser arguments remain subject
+to Playwright's compatibility warning.
 
 ## Design boundary
 

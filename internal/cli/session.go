@@ -120,8 +120,14 @@ type agentCLIConfig struct {
 }
 
 type agentBrowserConfig struct {
-	BrowserName string `json:"browserName,omitempty"`
-	UserDataDir string `json:"userDataDir,omitempty"`
+	BrowserName   string              `json:"browserName,omitempty"`
+	UserDataDir   string              `json:"userDataDir,omitempty"`
+	LaunchOptions *agentLaunchOptions `json:"launchOptions,omitempty"`
+}
+
+type agentLaunchOptions struct {
+	Args    []string `json:"args,omitempty"`
+	Channel string   `json:"channel,omitempty"`
 }
 
 type agentConsoleConfig struct {
@@ -748,6 +754,12 @@ func writeAgentCLIConfig(path string, options SessionOptions, configured Session
 		config.Browser = &agentBrowserConfig{BrowserName: browserName}
 		if options.Profile != "" {
 			config.Browser.UserDataDir = options.Profile
+		}
+		if len(configured.BrowserLaunchOptions.Args) > 0 || configured.BrowserLaunchOptions.Channel != "" {
+			config.Browser.LaunchOptions = &agentLaunchOptions{
+				Args:    append([]string(nil), configured.BrowserLaunchOptions.Args...),
+				Channel: configured.BrowserLaunchOptions.Channel,
+			}
 		}
 	}
 	contents, err := json.MarshalIndent(config, "", "  ")
