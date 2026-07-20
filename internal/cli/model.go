@@ -11,7 +11,7 @@ import (
 
 const (
 	configFileName     = ".heimdal.json"
-	defaultArtifactDir = ".dev/heimdal"
+	defaultArtifactDir = ".heimdal"
 )
 
 type Config struct {
@@ -54,7 +54,14 @@ type BrowserLaunchOptions struct {
 }
 
 type ArtifactConfig struct {
-	Directory string `json:"directory,omitempty"`
+	Directory string          `json:"directory,omitempty"`
+	Retention RetentionConfig `json:"retention"`
+}
+
+type RetentionConfig struct {
+	Enabled      bool `json:"enabled"`
+	MaxAgeDays   int  `json:"max_age_days"`
+	KeepFailures int  `json:"keep_failures"`
 }
 
 type Project struct {
@@ -80,7 +87,10 @@ func defaultConfig(playwrightConfig string) Config {
 			RunIDEnv: "HEIMDAL_RUN_ID",
 			PortEnv:  "HEIMDAL_PORT",
 		},
-		Artifacts: ArtifactConfig{Directory: defaultArtifactDir},
+		Artifacts: ArtifactConfig{
+			Directory: defaultArtifactDir,
+			Retention: RetentionConfig{Enabled: true, MaxAgeDays: 14, KeepFailures: 20},
+		},
 	}
 }
 
@@ -102,6 +112,9 @@ func loadConfig(root string, detectedConfig string) (Config, string, error) {
 	}
 	if cfg.Artifacts.Directory == "" {
 		cfg.Artifacts.Directory = defaultArtifactDir
+	}
+	if cfg.Artifacts.Retention.MaxAgeDays < 0 || cfg.Artifacts.Retention.KeepFailures < 0 {
+		return Config{}, path, errors.New("artifact retention values cannot be negative")
 	}
 	if cfg.Playwright.Config == "" {
 		cfg.Playwright.Config = detectedConfig

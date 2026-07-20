@@ -104,6 +104,10 @@ locators, bounded DOM excerpts, and artifact paths without opening a viewer.
 Inspect raw artifacts only when these summaries point to them. Never put
 secrets in commands, screenshots, traces, metadata, or generated tests.
 
+Use `heimdal gc --dry-run` before manual artifact cleanup. Retention preserves
+pins, active runs, recent runs, and the configured number of failures; do not
+delete `.heimdal` paths directly.
+
 `session save --test` creates a TypeScript draft, not a finished regression
 test. Replace TODO locators and add an assertion for the user-visible outcome.
 

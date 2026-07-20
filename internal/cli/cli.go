@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const usage = `Heimdal — agent-oriented Playwright orchestration
@@ -31,6 +32,7 @@ Usage:
   heimdal session <PLAYWRIGHT_CLI_COMMAND> [options]
   heimdal report [--dir PATH] [--run ID] [--json]
   heimdal trace [--dir PATH] [--run ID] [TRACE]
+  heimdal gc [--dir PATH] [--dry-run] [options]
   heimdal metadata publish NAMESPACE [--dir PATH] [--run ID] [--file FILE|-] [--json]
   heimdal metadata get [NAMESPACE] [--dir PATH] [--run ID] [--json]
   heimdal signal send NAME [--dir PATH] [--run ID] [--json]
@@ -76,6 +78,10 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer) int {
 		fmt.Fprintln(out, heimdalVersion())
 		return 0
 	}
+	if help, ok := commandHelp(args); ok {
+		fmt.Fprint(out, help)
+		return 0
+	}
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
 		fmt.Fprint(out, usage)
 		return 0
@@ -95,6 +101,8 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return runReport(args[1:], out, errOut)
 	case "trace":
 		return runTrace(ctx, args[1:], out, errOut)
+	case "gc":
+		return runGC(args[1:], out, errOut)
 	case "metadata":
 		return runMetadata(ctx, args[1:], out, errOut)
 	case "signal":
@@ -155,6 +163,17 @@ func runDoctor(args []string, out, errOut io.Writer) int {
 	report.Runner = project.Runner
 	report.AgentRunner = project.AgentRunner
 	report.ArtifactRoot = artifactRoot(project, "")
+	if runs, inspectErr := inspectArtifactRuns(report.ArtifactRoot, time.Now().UTC()); inspectErr == nil {
+		for _, run := range runs {
+			report.ArtifactBytes += run.SizeBytes
+			if run.Status == "interrupted" {
+				report.InterruptedRuns++
+			}
+		}
+		for _, run := range artifactGarbageCandidates(runs, project.Config.Artifacts.Retention, time.Now().UTC()) {
+			report.ReclaimableBytes += run.SizeBytes
+		}
+	}
 	version, versionErr := runCapture(project.Root, append(project.Runner, "--version"), baseEnvironment())
 	if versionErr != nil {
 		report.Warnings = append(report.Warnings, "repository Playwright is not runnable; deterministic run and list commands require a project Playwright install")
@@ -198,6 +217,9 @@ type DoctorReport struct {
 	PlaywrightVersion string   `json:"playwright_version,omitempty"`
 	AgentVersion      string   `json:"agent_cli_version,omitempty"`
 	ArtifactRoot      string   `json:"artifact_root,omitempty"`
+	ArtifactBytes     int64    `json:"artifact_bytes,omitempty"`
+	ReclaimableBytes  int64    `json:"reclaimable_bytes,omitempty"`
+	InterruptedRuns   int      `json:"interrupted_runs,omitempty"`
 	Warnings          []string `json:"warnings,omitempty"`
 	Error             string   `json:"error,omitempty"`
 }
@@ -234,6 +256,9 @@ func printDoctor(report DoctorReport, asJSON bool, out, errOut io.Writer, exitCo
 		fmt.Fprintln(out, "  Playwright sessions: unavailable")
 	}
 	fmt.Fprintf(out, "  artifacts: %s\n", report.ArtifactRoot)
+	if report.ArtifactBytes > 0 {
+		fmt.Fprintf(out, "  artifact bytes: %d (%d reclaimable; %d interrupted runs)\n", report.ArtifactBytes, report.ReclaimableBytes, report.InterruptedRuns)
+	}
 	for _, warning := range report.Warnings {
 		fmt.Fprintf(out, "  warning: %s\n", warning)
 	}

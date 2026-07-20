@@ -75,7 +75,7 @@ If Playwright discovers tests but executes none, Heimdal returns status
 `heimdal report --json` omits raw log tails and long file inventories by
 default; use `--json=full` when that retained detail is required inline.
 
-Each run gets an isolated artifact directory under `.dev/heimdal/` by default.
+Each run gets an isolated artifact directory under `.heimdal/` by default.
 The final JSON result, stdout, stderr, Playwright output, report, screenshots,
 videos, and traces remain there. While a test is still running, its live status
 is available through the same report command:
@@ -90,6 +90,18 @@ failing action, nearby actions and locators, bounded DOM snapshot excerpts,
 run timing, and artifact indexes. Use `heimdal trace --run latest` without
 `--json` when a person needs Playwright's interactive viewer; `heimdal trace
 --help` documents both modes.
+
+Artifact retention is enabled by default: runs older than 14 days are eligible
+for removal while the 20 newest failures remain protected. Pinned, active, and
+unrecognized directories are never removed. Inspect any cleanup first:
+
+```bash
+heimdal gc --dry-run
+heimdal gc --older-than 14d --keep-failures 20
+```
+
+Automatic cleanup runs at most once per day. `heimdal doctor --json` reports
+artifact bytes, reclaimable bytes, and interrupted runs.
 
 Use `--run-id ID` when another process needs a stable run name. Run IDs contain
 lowercase letters, numbers, and hyphens.
@@ -173,7 +185,12 @@ interactive QA can use this shape:
     "server_timeout_ms": 45000
   },
   "artifacts": {
-    "directory": ".dev/heimdal"
+    "directory": ".heimdal",
+    "retention": {
+      "enabled": true,
+      "max_age_days": 14,
+      "keep_failures": 20
+    }
   }
 }
 ```
@@ -181,7 +198,8 @@ interactive QA can use this shape:
 Heimdal allocates a free port when a run or session needs one. `${PORT}` and
 other configured environment templates are expanded for the app command.
 `provenance_env` records only each listed variable's name and set/unset state
-in run evidence; values are never persisted.
+in run evidence; values are never persisted. Set `artifacts.retention.enabled`
+to `false` to disable automatic cleanup; manual `heimdal gc` remains available.
 
 ## Coordinate with a running test
 

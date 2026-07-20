@@ -366,7 +366,7 @@ func TestLocatorFromPlaywrightAction(t *testing.T) {
 	if got := locatorFromPlaywrightAction(output, "click"); got != "page.getByRole('button', { name: 'Save' })" {
 		t.Fatalf("locator = %q", got)
 	}
-	if got := locatorFromPlaywrightAction("[Snapshot](.dev/heimdal/page.yml)\n", "click"); got != "" {
+	if got := locatorFromPlaywrightAction("[Snapshot](.heimdal/page.yml)\n", "click"); got != "" {
 		t.Fatalf("snapshot path was accepted as locator: %q", got)
 	}
 }
@@ -436,7 +436,7 @@ func TestCompactSessionCommandRetainsUsefulResultsWithoutSecrets(t *testing.T) {
 
 func TestEmittedSessionSnapshotReusesBoundedPlaywrightArtifact(t *testing.T) {
 	root := t.TempDir()
-	sessionDir := filepath.Join(root, ".dev", "heimdal", "sessions", "qa", "run-1")
+	sessionDir := filepath.Join(root, defaultArtifactDir, "sessions", "qa", "run-1")
 	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -447,7 +447,7 @@ func TestEmittedSessionSnapshotReusesBoundedPlaywrightArtifact(t *testing.T) {
 	}
 	project := Project{Root: root}
 	state := SessionState{SessionDir: sessionDir}
-	output := "- [Snapshot](.dev/heimdal/sessions/qa/run-1/page.yml)\n"
+	output := "- [Snapshot](.heimdal/sessions/qa/run-1/page.yml)\n"
 	got, ok := emittedSessionSnapshot(project, state, output)
 	if !ok || got != strings.TrimSpace(snapshot) {
 		t.Fatalf("emitted snapshot = %q, %v", got, ok)

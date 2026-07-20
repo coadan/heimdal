@@ -102,6 +102,9 @@ func executeRun(ctx context.Context, project Project, options RunOptions, out, e
 		return RunResult{}, errors.New("run id must contain only lowercase letters, numbers, and hyphens")
 	}
 	root := artifactRoot(project, options.Artifacts)
+	if options.Artifacts == "" {
+		maybeCollectArtifacts(project)
+	}
 	runDir := filepath.Join(root, runID)
 	if _, statErr := os.Stat(runDir); statErr == nil {
 		return RunResult{}, fmt.Errorf("artifact run already exists: %s (choose another --run-id)", runDir)
