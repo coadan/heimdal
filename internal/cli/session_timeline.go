@@ -228,6 +228,8 @@ func sessionActionCategory(args []string) string {
 		return "wait"
 	case "snapshot", "screenshot", "measure":
 		return "evidence"
+	case "expect":
+		return "assertion"
 	case "console", "requests", "diagnose":
 		return "console"
 	case "checkpoint":

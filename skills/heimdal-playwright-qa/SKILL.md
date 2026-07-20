@@ -101,6 +101,16 @@ also catch state that completed between agent commands. Use `--settle` for
 model-backed or multi-stage UI when the result should remain semantically quiet
 before continuing. All phases consume one timeout budget.
 
+Record the user-visible outcome with `session expect` during exploration so it
+graduates into a Playwright assertion:
+
+```bash
+heimdal session expect --role button --name "Continue" --state enabled
+heimdal session expect --text "Saved" --state visible
+heimdal session expect --url "http://127.0.0.1:4173/done"
+heimdal session expect --target e12 --value "ready"
+```
+
 On `wait`, `--name` is the accessible name; use `--session NAME` to select a
 named browser. Canonical targeted forms include `press TARGET KEY`, `type TARGET
 TEXT`, `fill TARGET TEXT --submit`, `click TARGET --force`, and `mouse click X
@@ -171,8 +181,12 @@ pins, active runs, recent runs, and the configured number of distinct failure
 fingerprints within its byte budget. Pruned runs remain as compact indexed
 history, so use `runs list` rather than scanning or deleting `.heimdal` paths.
 
-`session save --test` creates a TypeScript draft, not a finished regression
-test. Replace TODO locators and add an assertion for the user-visible outcome.
+Use `session save --test PATH --ready` to audit the generated TypeScript draft.
+It fails readiness when assertions are missing or coordinate, stale-ref,
+evaluation, run-code, or unsupported actions still need repair. The draft is
+still written. A passing readiness audit means the recorded actions are
+portable; run the repository-owned test before treating it as regression
+evidence.
 
 ## Project and fixture contract
 

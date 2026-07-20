@@ -222,6 +222,8 @@ func sessionActionCorrection(action string) string {
 		return "use `heimdal session mouse click <x> <y>`"
 	case "wait":
 		return "use `heimdal session wait --role <role> [--name <name>]`, `--text <text>`, or `--change`"
+	case "expect":
+		return "use `heimdal session expect --role <role> [--name <name>]`, `--text <text>`, `--url <url>`, or `--target <ref> --value <value>`"
 	default:
 		return "run `heimdal session --help` for canonical action forms"
 	}

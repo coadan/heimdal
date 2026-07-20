@@ -115,6 +115,7 @@ type SessionResponse struct {
 	Error           string             `json:"error,omitempty"`
 	Correction      string             `json:"correction,omitempty"`
 	Measurement     *LayoutMeasurement `json:"measurement,omitempty"`
+	Graduation      *SessionGraduation `json:"graduation,omitempty"`
 	Issues          []string           `json:"issues,omitempty"`
 	Server          string             `json:"server,omitempty"`
 	Artifacts       map[string]string  `json:"artifacts,omitempty"`
@@ -125,6 +126,7 @@ type SessionResponse struct {
 type sessionSaveOptions struct {
 	SessionOptions
 	TestPath string
+	Ready    bool
 }
 
 type sessionBatchOptions struct {
@@ -175,6 +177,8 @@ func runSession(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return runSessionDiagnose(ctx, args[1:], out, errOut)
 	case "wait":
 		return runSessionWait(ctx, args[1:], out, errOut)
+	case "expect":
+		return runSessionExpect(ctx, args[1:], out, errOut)
 	case "timeline":
 		return runSessionTimeline(args[1:], out, errOut)
 	case "report":
@@ -202,6 +206,7 @@ Usage:
   heimdal session screenshot [options] [-- PLAYWRIGHT_CLI_ARGS...]
   heimdal session diagnose [options]
   heimdal session wait (--role ROLE [--name NAME] | --text TEXT | --change) [options]
+  heimdal session expect (--role ROLE [--name NAME] | --text TEXT | --url URL | --target TARGET --value VALUE) [options]
   heimdal session timeline [NAME] [options]
   heimdal session report [NAME] [options]
   heimdal session checkpoint LABEL [options]
@@ -246,6 +251,20 @@ Stable action forms:
   click TARGET [left|right|middle|--force]
   mouse click X Y
 
+Expect options:
+  --role ROLE      Assert an accessibility role, optionally narrowed by --name
+  --name NAME      Accessible name for --role (use --session for session lookup)
+  --text TEXT      Assert exact visible text
+  --url URL        Assert the exact current URL
+  --target TARGET  Current ref for an input value assertion
+  --value VALUE    Expected input value paired with --target
+  --state STATE    visible, hidden, enabled, disabled, checked, or unchecked
+  --timeout AGE    Assertion timeout such as 5s (default: 5s)
+
+Save options:
+  --test PATH      Write a Playwright test draft
+  --ready          Fail unless the draft has assertions and portable actions
+
 Measure options:
   TARGET           Optional current element ref or unique selector
   --session NAME   Named browser session
@@ -258,6 +277,7 @@ Examples:
   heimdal session fill e5 "hello"
   heimdal session wait --role button --name "Continue" --state enabled --timeout 30s
   heimdal session wait --change --settle 300ms
+  heimdal session expect --role button --name "Continue" --state visible
   heimdal session checkpoint "entered checkout"
   heimdal session timeline --json
   heimdal session measure --json
@@ -719,6 +739,8 @@ func runSessionSave(args []string, out, errOut io.Writer) int {
 	response := sessionResponse(state, sessionCommandResult{}, nil)
 	response.Status = "saved"
 	response.Artifacts["transcript"] = markdownPath
+	graduation := auditSessionGraduation(actions)
+	response.Graduation = &graduation
 	if options.TestPath != "" {
 		testPath := options.TestPath
 		if !filepath.IsAbs(testPath) {
@@ -731,6 +753,10 @@ func runSessionSave(args []string, out, errOut io.Writer) int {
 			return reportError(options.JSON, fmt.Errorf("write generated test: %w", err), out, errOut)
 		}
 		response.Artifacts["test"] = testPath
+	}
+	if options.Ready && !graduation.Ready {
+		response.Status = "issues"
+		response.Issues = append(response.Issues, graduation.Issues...)
 	}
 	return printSessionResponse(out, errOut, response, options.JSON)
 }
@@ -850,6 +876,10 @@ func parseSessionSaveOptions(args []string) (sessionSaveOptions, error) {
 			}
 			i = next
 			options.TestPath = value
+			continue
+		}
+		if args[i] == "--ready" {
+			options.Ready = true
 			continue
 		}
 		common = append(common, args[i])
@@ -1555,6 +1585,9 @@ func printSessionResponse(out, errOut io.Writer, response SessionResponse, asJSO
 			fmt.Fprintln(errOut)
 		}
 	}
+	if response.Graduation != nil {
+		fmt.Fprintf(out, "Graduation: ready=%t, assertions=%d, portable=%d/%d\n", response.Graduation.Ready, response.Graduation.Assertions, response.Graduation.PortableActions, response.Graduation.RecordedActions)
+	}
 	fmt.Fprintf(out, "Heimdal session %s: %s", response.Session, response.Status)
 	if response.Action > 0 {
 		fmt.Fprintf(out, " (action %d)", response.Action)
@@ -1600,6 +1633,7 @@ func compactSessionResponse(response SessionResponse) SessionResponse {
 		Error:           response.Error,
 		Correction:      response.Correction,
 		Measurement:     response.Measurement,
+		Graduation:      response.Graduation,
 		Issues:          response.Issues,
 	}
 }
@@ -1624,7 +1658,18 @@ func sessionMarkdown(state SessionState, actions []SessionActionRecord) string {
 
 func sessionTest(state SessionState, actions []SessionActionRecord) string {
 	var output strings.Builder
-	output.WriteString("import { test } from '@playwright/test';\n\n")
+	hasExpectation := false
+	for _, action := range actions {
+		if len(action.Args) > 0 && action.Args[0] == "expect" && action.ExitCode == 0 {
+			hasExpectation = true
+			break
+		}
+	}
+	if hasExpectation {
+		output.WriteString("import { expect, test } from '@playwright/test';\n\n")
+	} else {
+		output.WriteString("import { test } from '@playwright/test';\n\n")
+	}
 	fmt.Fprintf(&output, "test(%s, async ({ page }) => {\n", quoteTypeScript("recorded Heimdal session "+state.Name))
 	if state.URL != "" {
 		fmt.Fprintf(&output, "  await page.goto(%s);\n", quoteTypeScript(state.URL))
@@ -1704,6 +1749,8 @@ func sessionActionTestLines(action SessionActionRecord) []string {
 			return nil
 		}
 		return []string{fmt.Sprintf("await page.setViewportSize({ width: %s, height: %s });", action.Args[1], action.Args[2])}
+	case "expect":
+		return expectationTestLines(action)
 	default:
 		return []string{"// Heimdal action: " + strings.Join(action.Args, " ")}
 	}

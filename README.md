@@ -164,6 +164,18 @@ quiet before the agent continues; all wait phases share one timeout budget.
 For a named browser session, pass `--session NAME` because `wait --name` means
 the accessible name paired with `--role`.
 
+Record user-visible outcomes as Playwright-backed assertions while exploring:
+
+```bash
+heimdal session expect --role button --name "Continue" --state enabled
+heimdal session expect --text "Saved" --state visible
+heimdal session expect --url "http://127.0.0.1:4173/done"
+heimdal session expect --target e12 --value "ready"
+```
+
+`expect` uses accessibility roles, exact visible text, the current URL, or an
+input value and records a portable assertion for `session save --test`.
+
 Heimdal also keeps common interaction shapes stable across Playwright CLI
 versions: targeted `press` and `type`, `fill --submit`, `click --force`, and
 `mouse click X Y` are canonical forms. Invalid shapes return a bounded
@@ -232,6 +244,18 @@ heimdal session batch --file browser-steps.json --name qa --json
 
 Batch execution stops at the first failed step. Ordinary action JSON omits
 repeated session metadata; use `--json=full` when that metadata is required.
+
+When graduating an exploration, ask Heimdal to reject an incomplete draft:
+
+```bash
+heimdal session save --test tests/browser/exploration.spec.ts --ready
+```
+
+The graduation report counts recorded assertions and portable actions, and
+flags absolute coordinates, refs without retained locators, raw evaluation or
+code, unsupported actions, and missing outcome assertions. The test draft is
+still written when the readiness check fails so the reported issues can be
+fixed directly.
 
 The directory supplied to `session start` is recorded, so later commands can
 find a uniquely named session even when run from another directory. Pass
