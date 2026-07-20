@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 )
@@ -18,7 +19,7 @@ func planStableSessionAction(ctx context.Context, project Project, state *Sessio
 		if len(args) != 2 {
 			return nil, "", sessionActionCorrection(action), errors.New("press accepts KEY or TARGET KEY")
 		}
-		locator, err := generateSessionLocator(ctx, project, state, statePath, args[0])
+		locator, err := resolveSessionLocator(ctx, project, state, statePath, args[0])
 		if err != nil {
 			return nil, "", sessionActionCorrection(action), err
 		}
@@ -31,7 +32,7 @@ func planStableSessionAction(ctx context.Context, project Project, state *Sessio
 		if len(args) != 2 {
 			return nil, "", sessionActionCorrection(action), errors.New("type accepts TEXT or TARGET TEXT")
 		}
-		locator, err := generateSessionLocator(ctx, project, state, statePath, args[0])
+		locator, err := resolveSessionLocator(ctx, project, state, statePath, args[0])
 		if err != nil {
 			return nil, "", sessionActionCorrection(action), err
 		}
@@ -39,7 +40,7 @@ func planStableSessionAction(ctx context.Context, project Project, state *Sessio
 		return []string{"run-code", code}, locator, "", nil
 	case "click":
 		if len(args) == 2 && args[1] == "--force" {
-			locator, err := generateSessionLocator(ctx, project, state, statePath, args[0])
+			locator, err := resolveSessionLocator(ctx, project, state, statePath, args[0])
 			if err != nil {
 				return nil, "", sessionActionCorrection(action), err
 			}
@@ -70,6 +71,92 @@ func planStableSessionAction(ctx context.Context, project Project, state *Sessio
 	default:
 		return logicalArgs, "", "", nil
 	}
+}
+
+func resolveSessionLocator(ctx context.Context, project Project, state *SessionState, statePath, target string) (string, error) {
+	if strings.HasPrefix(target, "e") && state.LastSnapshot != "" {
+		if contents, err := os.ReadFile(state.LastSnapshot); err == nil {
+			if locator := locatorFromSessionSnapshot(string(contents), target); locator != "" {
+				return locator, nil
+			}
+		}
+	}
+	return generateSessionLocator(ctx, project, state, statePath, target)
+}
+
+func locatorFromSessionSnapshot(snapshot, target string) string {
+	nodes := parseSnapshotTree(snapshot, true)
+	targetIndex := -1
+	role, name := "", ""
+	for index, node := range nodes {
+		if node.Ref != target {
+			continue
+		}
+		targetIndex = index
+		role, name = snapshotRoleAndName(node.Raw)
+		break
+	}
+	if targetIndex < 0 || role == "" {
+		return ""
+	}
+
+	total := 0
+	for _, node := range nodes {
+		candidateRole, candidateName := snapshotRoleAndName(node.Raw)
+		if candidateRole != role || candidateName != name {
+			continue
+		}
+		total++
+	}
+	// A semantic locator is only an exact replacement for Playwright's ref
+	// lookup when it identifies one current node. Let generate-locator retain
+	// ownership of ambiguous snapshots instead of guessing from DOM order.
+	if total != 1 {
+		return ""
+	}
+
+	locator := "page.getByRole(" + jsonString(role)
+	if name != "" {
+		locator += ", { name: " + jsonString(name) + ", exact: true }"
+	}
+	locator += ")"
+	return locator
+}
+
+func snapshotRoleAndName(line string) (string, string) {
+	body := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "-"))
+	if body == "" {
+		return "", ""
+	}
+	roleEnd := strings.IndexAny(body, " [:")
+	if roleEnd < 0 {
+		roleEnd = len(body)
+	}
+	role := body[:roleEnd]
+	for _, char := range role {
+		if (char < 'a' || char > 'z') && char != '-' {
+			return "", ""
+		}
+	}
+	if role == "" || role == "generic" || role == "text" || role == "none" || role == "presentation" {
+		return "", ""
+	}
+
+	rest := strings.TrimSpace(body[roleEnd:])
+	if !strings.HasPrefix(rest, `"`) {
+		return role, ""
+	}
+	for end := 1; end < len(rest); end++ {
+		if rest[end] != '"' || rest[end-1] == '\\' {
+			continue
+		}
+		name, err := strconv.Unquote(rest[:end+1])
+		if err != nil {
+			return role, ""
+		}
+		return role, name
+	}
+	return role, ""
 }
 
 func generateSessionLocator(ctx context.Context, project Project, state *SessionState, statePath, target string) (string, error) {

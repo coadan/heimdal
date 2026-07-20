@@ -53,6 +53,36 @@ func TestStableActionGrammarUsesGeneratedLocatorForTargetedActions(t *testing.T)
 	}
 }
 
+func TestStableActionGrammarUsesRetainedSnapshotWithoutLocatorProcess(t *testing.T) {
+	root := t.TempDir()
+	runDir := filepath.Join(root, "session")
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	snapshot := filepath.Join(runDir, "latest.snapshot.yml")
+	contents := `- main [ref=e1]:
+  - textbox "Message" [ref=e12]
+  - button "Save" [ref=e13]
+  - button "Save" [ref=e14]
+`
+	if err := os.WriteFile(snapshot, []byte(contents), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	state := SessionState{Name: "qa", SessionDir: runDir, LastSnapshot: snapshot, ActionLog: filepath.Join(runDir, "actions.jsonl"), StartedAt: time.Now().UTC()}
+	project := Project{Root: root, AgentRunner: []string{filepath.Join(root, "missing-playwright-cli")}, Config: defaultConfig("")}
+
+	runtime, locator, correction, err := planStableSessionAction(context.Background(), project, &state, filepath.Join(runDir, "session.json"), "press", []string{"press", "e12", "Enter"})
+	if err != nil || correction != "" || locator != `page.getByRole("textbox", { name: "Message", exact: true })` || !strings.Contains(strings.Join(runtime, " "), `.press("Enter")`) {
+		t.Fatalf("targeted press plan = %v, %q, %q, %v", runtime, locator, correction, err)
+	}
+	if state.ActionCount != 0 {
+		t.Fatalf("cached locator launched Playwright: %#v", state)
+	}
+	if locator := locatorFromSessionSnapshot(contents, "e14"); locator != "" {
+		t.Fatalf("ambiguous snapshot locator = %q, want upstream fallback", locator)
+	}
+}
+
 func TestParseGeneratedLocatorHandlesRawAndCodeOutput(t *testing.T) {
 	for _, output := range []string{
 		`page.getByText("Continue")`,

@@ -365,12 +365,14 @@ whole-task command, output, time, and token totals include those detours. This
 is one controlled pair rather than a general performance claim: agent choices
 vary and token totals include cached context.
 
-The current implementation also captures Playwright's generated locator from
-the action itself instead of launching a second locator command. A deterministic
-local microbenchmark on the same date measured cached session discovery at
-about 30 µs versus 10 ms for full project rediscovery. These timings cover
-Heimdal overhead only; browser startup and page behavior remain
-application-dependent.
+The current implementation captures Playwright's generated locator from native
+actions. For targeted actions that require `run-code`, it reuses a unique
+role-and-name locator from the retained Playwright snapshot and falls back to
+Playwright's locator generator when the snapshot is ambiguous. This avoids a
+browser call without guessing. A deterministic local microbenchmark on the same
+date measured cached session discovery at about 32 µs versus 12 ms for full
+project rediscovery. These timings cover Heimdal overhead only; browser startup
+and page behavior remain application-dependent.
 
 ## Development
 
