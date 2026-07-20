@@ -142,14 +142,14 @@ func discoverSession(options SessionOptions) (Project, SessionState, string, err
 		if name == "" {
 			name = defaultSessionName
 		}
-		return Project{}, SessionState{}, "", fmt.Errorf("session %q was not found from the current directory; start it with `heimdal session start --root DIR --name %s` or pass --root", name, name)
+		return Project{}, SessionState{}, "", fmt.Errorf("session %q was not found from the current directory; start it with `heimdal session start --dir DIR --name %s` or pass --dir", name, name)
 	}
 	if len(indexes) > 1 {
 		roots := make([]string, len(indexes))
 		for i, index := range indexes {
 			roots[i] = index.Root
 		}
-		return Project{}, SessionState{}, "", fmt.Errorf("session %q exists in multiple roots (%s); pass --root", indexes[0].Name, strings.Join(roots, ", "))
+		return Project{}, SessionState{}, "", fmt.Errorf("session %q exists in multiple worktrees (%s); pass --dir", indexes[0].Name, strings.Join(roots, ", "))
 	}
 	index := indexes[0]
 	project, err := Discover(index.Root)

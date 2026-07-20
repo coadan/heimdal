@@ -24,13 +24,13 @@ heimdal skill install
 
 ## Quick start
 
-Run from any project supported by Playwright CLI, or pass its path with `--root`:
+Run from any project supported by Playwright CLI, or pass its path with `--dir`:
 
 ```bash
 heimdal doctor --json
 heimdal install agent-cli
 heimdal install chromium
-heimdal session start --root /path/to/worktree --name qa
+heimdal session start --dir /path/to/worktree --name qa
 heimdal session observe
 heimdal session click e12
 heimdal session stop --name qa

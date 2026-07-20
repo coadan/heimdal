@@ -15,8 +15,8 @@ import (
 const usage = `Heimdal — agent-oriented Playwright orchestration
 
 Usage:
-  heimdal doctor [--root DIR] [--json]
-  heimdal init [--root DIR] [--force]
+  heimdal doctor [--dir DIR] [--json]
+  heimdal init [--dir DIR] [--force]
   heimdal run [options] [-- PLAYWRIGHT_ARGS...]
   heimdal list [options] [-- PLAYWRIGHT_ARGS...]
   heimdal session start [options]
@@ -27,14 +27,14 @@ Usage:
   heimdal session diagnose [options]
   heimdal session save [options]
   heimdal session <PLAYWRIGHT_CLI_COMMAND> [options]
-  heimdal report [--root DIR] [--run ID] [--json]
-  heimdal trace [--root DIR] [--run ID] [TRACE]
-  heimdal install [--root DIR] [BROWSER...|agent-cli|agent-browser]
+  heimdal report [--dir DIR] [--run ID] [--json]
+  heimdal trace [--dir DIR] [--run ID] [TRACE]
+  heimdal install [--dir DIR] [BROWSER...|agent-cli|agent-browser]
   heimdal skill install [--destination DIR] [--force]
   heimdal skill path
 
 Run options:
-  --root DIR       Run as if invoked from DIR (defaults to the current worktree)
+  --dir DIR        Locate the project from DIR (defaults to the current directory)
   --run-id ID      Stable artifact/run identity
   --artifacts DIR  Override the artifact root
   --port PORT      Override the project isolation port
@@ -43,7 +43,7 @@ Run options:
   --json           Print only the agent-readable result JSON
 
 Session options:
-  --root DIR       Worktree root; persisted on session start
+  --dir DIR        Locate the session from DIR; persisted root is canonicalized
   --name NAME      Named persistent Playwright agent session
   --url URL        URL to open, or project session.url
   --profile DIR    Persistent browser profile directory
@@ -366,8 +366,8 @@ func parseRunOptions(args []string) (RunOptions, error) {
 			break
 		}
 		switch arg {
-		case "--root":
-			value, next, err := nextValue(args, i, arg)
+		case "--dir", "--root":
+			value, next, err := nextDirectoryValue(args, i, options.Root)
 			if err != nil {
 				return options, err
 			}
@@ -430,8 +430,8 @@ func parseSimpleOptions(args []string, allowJSON bool) (string, bool, error) {
 	asJSON := false
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
-		case "--root":
-			value, next, err := nextValue(args, i, "--root")
+		case "--dir", "--root":
+			value, next, err := nextDirectoryValue(args, i, root)
 			if err != nil {
 				return root, asJSON, err
 			}
@@ -456,8 +456,8 @@ func parseInitOptions(args []string) (string, bool, error) {
 	force := false
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
-		case "--root":
-			value, next, err := nextValue(args, i, "--root")
+		case "--dir", "--root":
+			value, next, err := nextDirectoryValue(args, i, root)
 			if err != nil {
 				return root, force, err
 			}
@@ -495,8 +495,8 @@ func parseSimpleOptionsWithoutUnknown(args []string) (string, bool, error) {
 	root, asJSON := "", false
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
-		case "--root":
-			value, next, err := nextValue(args, i, "--root")
+		case "--dir", "--root":
+			value, next, err := nextDirectoryValue(args, i, root)
 			if err != nil {
 				return root, asJSON, err
 			}
@@ -524,8 +524,8 @@ func parseTraceOptions(args []string) (string, string, string, error) {
 	trace := ""
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
-		case "--root":
-			value, next, err := nextValue(args, i, "--root")
+		case "--dir", "--root":
+			value, next, err := nextDirectoryValue(args, i, root)
 			if err != nil {
 				return root, runID, trace, err
 			}
@@ -555,8 +555,8 @@ func parseRootAndForward(args []string) (string, []string, error) {
 	root := ""
 	var forwarded []string
 	for i := 0; i < len(args); i++ {
-		if args[i] == "--root" {
-			value, next, err := nextValue(args, i, "--root")
+		if args[i] == "--dir" || args[i] == "--root" {
+			value, next, err := nextDirectoryValue(args, i, root)
 			if err != nil {
 				return root, forwarded, err
 			}
@@ -567,6 +567,17 @@ func parseRootAndForward(args []string) (string, []string, error) {
 		forwarded = append(forwarded, args[i])
 	}
 	return root, forwarded, nil
+}
+
+func nextDirectoryValue(args []string, index int, current string) (string, int, error) {
+	value, next, err := nextValue(args, index, args[index])
+	if err != nil {
+		return current, index, err
+	}
+	if current != "" && filepath.Clean(current) != filepath.Clean(value) {
+		return current, index, fmt.Errorf("conflicting --dir and --root values: %q and %q", current, value)
+	}
+	return value, next, nil
 }
 
 func relativeToRoot(root, value string) string {

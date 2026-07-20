@@ -17,7 +17,7 @@ needs investigation, or an agent must explore before writing a test:
 
 ```bash
 heimdal doctor --json
-heimdal session start --root <worktree> --name <short-worktree-name> --headed
+heimdal session start --dir <worktree> --name <short-worktree-name> --headed
 heimdal session observe
 ```
 

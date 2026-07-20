@@ -13,7 +13,7 @@ import (
 
 func TestParseRunOptionsPreservesPlaywrightArgs(t *testing.T) {
 	options, err := parseRunOptions([]string{
-		"--root", "/tmp/project",
+		"--dir", "/tmp/project",
 		"--run-id", "branch/run",
 		"--headed",
 		"tests/example.spec.ts",
@@ -30,6 +30,13 @@ func TestParseRunOptionsPreservesPlaywrightArgs(t *testing.T) {
 	want := []string{"tests/example.spec.ts", "--grep", "victory", "--project=chromium"}
 	if strings.Join(options.Forwarded, "\x00") != strings.Join(want, "\x00") {
 		t.Fatalf("forwarded args = %#v, want %#v", options.Forwarded, want)
+	}
+}
+
+func TestDirectoryFlagsRejectConflicts(t *testing.T) {
+	_, err := parseRunOptions([]string{"--dir", "/tmp/one", "--root", "/tmp/two"})
+	if err == nil || !strings.Contains(err.Error(), "conflicting --dir and --root values") {
+		t.Fatalf("expected conflicting directory flags error, got %v", err)
 	}
 }
 
