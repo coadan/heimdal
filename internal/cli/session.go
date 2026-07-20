@@ -237,6 +237,7 @@ Wait options:
   --state STATE    attached, detached, visible, hidden, enabled, or disabled
   --change         Wait for the page's semantic accessibility state to change
   --timeout AGE    Maximum wait such as 30s (default: 30s)
+  --settle AGE     Require semantic state to remain quiet for this duration
 
 Stable action forms:
   press KEY | press TARGET KEY
@@ -256,6 +257,7 @@ Examples:
   heimdal session click e12
   heimdal session fill e5 "hello"
   heimdal session wait --role button --name "Continue" --state enabled --timeout 30s
+  heimdal session wait --change --settle 300ms
   heimdal session checkpoint "entered checkout"
   heimdal session timeline --json
   heimdal session measure --json

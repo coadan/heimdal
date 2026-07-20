@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"time"
 )
@@ -17,6 +18,7 @@ type sessionWaitOptions struct {
 	Text   string
 	State  string
 	Change bool
+	Settle time.Duration
 }
 
 func runSessionWait(ctx context.Context, args []string, out, errOut io.Writer) int {
@@ -36,9 +38,55 @@ func runSessionWait(ctx context.Context, args []string, out, errOut io.Writer) i
 }
 
 func executeSessionWaitAction(ctx context.Context, project Project, state *SessionState, statePath string, options sessionWaitOptions) SessionResponse {
+	if options.Change {
+		if response, completed := completedChangeBeforeWait(ctx, project, state, statePath, options); completed {
+			return response
+		}
+	}
 	logicalArgs := waitLogicalArgs(options)
 	runtimeArgs := []string{"run-code", waitPlaywrightCode(options)}
 	return executeSessionActionPlan(ctx, project, state, statePath, "wait", options.SessionOptions, logicalArgs, runtimeArgs, "")
+}
+
+func completedChangeBeforeWait(ctx context.Context, project Project, state *SessionState, statePath string, options sessionWaitOptions) (SessionResponse, bool) {
+	if state.LastSnapshot == "" {
+		return SessionResponse{}, false
+	}
+	previous, err := os.ReadFile(state.LastSnapshot)
+	if err != nil {
+		return SessionResponse{}, false
+	}
+	logicalArgs := append(waitLogicalArgs(options), "--baseline-check")
+	result, commandErr := runSessionCommandModeArgs(ctx, project, state, statePath, logicalArgs, []string{"snapshot"}, "", true)
+	if commandErr != nil {
+		response := sessionResponse(*state, result, commandErr)
+		response.Status = "failed"
+		response.CompactJSON = !options.FullJSON
+		response.Command = waitLogicalArgs(options)
+		return response, true
+	}
+	current, ok := sessionSnapshotPayload(project, *state, result.Stdout)
+	if !ok {
+		return SessionResponse{}, false
+	}
+	view := semanticSnapshotDelta(string(previous), current, "", false)
+	if view.Text == "No semantic changes." {
+		return SessionResponse{}, false
+	}
+	stored, storeErr := storeSessionSnapshot(state, statePath, result.Sequence, current, true, options.Full, "", true)
+	response := sessionResponse(*state, result, storeErr)
+	response.CompactJSON = !options.FullJSON
+	response.Command = waitLogicalArgs(options)
+	response.Output = "semantic change already observed"
+	response.Snapshot = stored.Text
+	response.SnapshotMode = stored.Mode
+	response.SnapshotOmitted = stored.Omitted
+	if storeErr != nil {
+		response.Status = "failed"
+	} else {
+		response.Status = "passed"
+	}
+	return response, true
 }
 
 func parseSessionWaitOptions(args []string) (sessionWaitOptions, error) {
@@ -80,6 +128,16 @@ func parseSessionWaitOptions(args []string) (sessionWaitOptions, error) {
 				return options, fmt.Errorf("--timeout must be a positive duration such as 30s (got %q)", value)
 			}
 			index, options.Timeout = next, duration
+		case "--settle":
+			value, next, err := nextValue(args, index, "--settle")
+			if err != nil {
+				return options, err
+			}
+			duration, err := time.ParseDuration(value)
+			if err != nil || duration < 0 {
+				return options, fmt.Errorf("--settle must be a non-negative duration such as 300ms (got %q)", value)
+			}
+			index, options.Settle = next, duration
 		case "--change":
 			options.Change = true
 		case "--json":
@@ -166,22 +224,41 @@ func waitLogicalArgs(options sessionWaitOptions) []string {
 		args = append(args, "--state", options.State)
 	}
 	args = append(args, "--timeout", options.Timeout.String())
+	if options.Settle > 0 {
+		args = append(args, "--settle", options.Settle.String())
+	}
 	return args
 }
 
 func waitPlaywrightCode(options sessionWaitOptions) string {
 	timeoutMS := options.Timeout.Milliseconds()
+	settleMS := options.Settle.Milliseconds()
 	if options.Change {
 		return fmt.Sprintf(`async page => {
   const root = page.locator('body');
   const before = await root.ariaSnapshot();
   const deadline = Date.now() + %d;
+  let changed = false;
+  let stable = '';
+  let stableSince = 0;
   while (Date.now() < deadline) {
     await page.waitForTimeout(100);
-    if (await root.ariaSnapshot() !== before) return;
+    const current = await root.ariaSnapshot();
+    if (!changed && current !== before) {
+      changed = true;
+      stable = current;
+      stableSince = Date.now();
+      if (%d === 0) return;
+      continue;
+    }
+    if (changed && current !== stable) {
+      stable = current;
+      stableSince = Date.now();
+    }
+    if (changed && Date.now() - stableSince >= %d) return;
   }
-  throw new Error('Timed out waiting for a semantic page change');
-}`, timeoutMS)
+  throw new Error(changed ? 'Timed out waiting for semantic state to settle' : 'Timed out waiting for a semantic page change');
+}`, timeoutMS, settleMS, settleMS)
 	}
 	locator := "page.getByText(" + jsonString(options.Text) + ").first()"
 	if options.Role != "" {
@@ -191,8 +268,28 @@ func waitPlaywrightCode(options sessionWaitOptions) string {
 		}
 		locator += ").first()"
 	}
+	settle := fmt.Sprintf(`
+  if (%d > 0) {
+    const root = page.locator('body');
+    let stable = await root.ariaSnapshot();
+    let stableSince = Date.now();
+    while (Date.now() < deadline) {
+      await page.waitForTimeout(Math.min(100, Math.max(1, deadline - Date.now())));
+      const current = await root.ariaSnapshot();
+      if (current !== stable) {
+        stable = current;
+        stableSince = Date.now();
+      } else if (Date.now() - stableSince >= %d) {
+        return;
+      }
+    }
+    throw new Error('Timed out waiting for semantic state to settle');
+  }`, settleMS, settleMS)
 	if options.State != "enabled" && options.State != "disabled" {
-		return fmt.Sprintf("async page => { await %s.waitFor({ state: %s, timeout: %d }); }", locator, jsonString(options.State), timeoutMS)
+		return fmt.Sprintf(`async page => {
+  const deadline = Date.now() + %d;
+  await %s.waitFor({ state: %s, timeout: Math.max(1, deadline - Date.now()) });%s
+}`, timeoutMS, locator, jsonString(options.State), settle)
 	}
 	wanted := "true"
 	if options.State == "disabled" {
@@ -200,14 +297,14 @@ func waitPlaywrightCode(options sessionWaitOptions) string {
 	}
 	return fmt.Sprintf(`async page => {
   const target = %s;
-  await target.waitFor({ state: 'visible', timeout: %d });
   const deadline = Date.now() + %d;
+  await target.waitFor({ state: 'visible', timeout: Math.max(1, deadline - Date.now()) });
   while (Date.now() < deadline) {
-    if ((await target.isEnabled()) === %s) return;
+    if ((await target.isEnabled()) === %s) break;
     await page.waitForTimeout(100);
   }
-  throw new Error('Timed out waiting for element to become %s');
-}`, locator, timeoutMS, timeoutMS, wanted, options.State)
+  if ((await target.isEnabled()) !== %s) throw new Error('Timed out waiting for element to become %s');%s
+}`, locator, timeoutMS, wanted, wanted, options.State, settle)
 }
 
 func jsonString(value string) string {

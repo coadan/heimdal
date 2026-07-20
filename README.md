@@ -151,11 +151,16 @@ Wait for user-visible state instead of polling snapshots or sleeping:
 heimdal session wait --role button --name "Continue" --state enabled --timeout 30s
 heimdal session wait --text "The world answers"
 heimdal session wait --change
+heimdal session wait --change --settle 300ms
 ```
 
 `--role` is the accessibility role exposed by the page, such as `button`,
 `link`, `textbox`, or `dialog`. Waits run through Playwright locators and return
-the resulting semantic delta.
+the resulting semantic delta. A change wait first compares the live page with
+Heimdal's retained Playwright snapshot, so a change that completed between
+agent commands is returned immediately instead of timing out. Use `--settle`
+for model-backed or multi-stage interfaces that should remain semantically
+quiet before the agent continues; all wait phases share one timeout budget.
 For a named browser session, pass `--session NAME` because `wait --name` means
 the accessible name paired with `--role`.
 

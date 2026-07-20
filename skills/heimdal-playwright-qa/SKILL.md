@@ -93,7 +93,13 @@ semantic change; each successful wait returns the resulting delta:
 heimdal session wait --role button --name "Continue" --state enabled --timeout 30s
 heimdal session wait --text "The world answers"
 heimdal session wait --change
+heimdal session wait --change --settle 300ms
 ```
+
+Change waits compare against the retained Playwright snapshot first, so they
+also catch state that completed between agent commands. Use `--settle` for
+model-backed or multi-stage UI when the result should remain semantically quiet
+before continuing. All phases consume one timeout budget.
 
 On `wait`, `--name` is the accessible name; use `--session NAME` to select a
 named browser. Canonical targeted forms include `press TARGET KEY`, `type TARGET
