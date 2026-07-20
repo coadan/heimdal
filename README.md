@@ -1,11 +1,17 @@
 # Heimdal
 
-Agent-oriented orchestration around Playwright CLI.
+Agent-oriented orchestration around Playwright.
 
-Heimdal wraps the official `playwright-cli` and Playwright Test with
-project-aware fixture lifecycle, isolated browser sessions, compact
-observations, and retained test artifacts. It does not implement a browser
-protocol.
+Playwright is the browser automation runtime and test authority. Heimdal is a
+thin, project-aware control plane around the official `playwright-cli`: it
+manages fixture and server lifecycle, isolated sessions, compact agent-facing
+output, and retained evidence. Browser automation, locators, assertions, and
+reports remain in Playwright; Heimdal does not implement a browser protocol.
+
+Playwright drives the browser well, but agents also need a consistent way to
+start projects, keep sessions alive, isolate worktrees, and consume useful
+results. Heimdal provides that missing workflow layer without replacing the
+Playwright runtime.
 
 ## Install
 
