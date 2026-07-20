@@ -384,6 +384,17 @@ func TestSessionActionsReobserveStateChanges(t *testing.T) {
 	}
 }
 
+func TestNavigationActionsRefreshSnapshotReferences(t *testing.T) {
+	for _, action := range []string{"goto", "reload", "go-back", "go-forward", "tab-new", "tab-close", "tab-select"} {
+		if !snapshotRefreshesReferences(action) {
+			t.Fatalf("%q should refresh snapshot references", action)
+		}
+	}
+	if snapshotRefreshesReferences("click") {
+		t.Fatal("click should not refresh every interactive reference")
+	}
+}
+
 func TestSessionSnapshotArgsBoundDefaultOutput(t *testing.T) {
 	if got, want := strings.Join(sessionSnapshotArgs(false, false, nil), " "), "snapshot"; got != want {
 		t.Fatalf("default snapshot args = %q, want %q", got, want)

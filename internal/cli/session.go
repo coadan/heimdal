@@ -364,7 +364,7 @@ func startSession(ctx context.Context, project Project, options SessionOptions, 
 		observe, observeErr = runSessionCommandMode(ctx, project, &state, statePath, observeArgs, "", !options.Verbose)
 		snapshot, _ = sessionSnapshotPayload(project, state, observe.Stdout)
 	}
-	view, snapshotErr := storeSessionSnapshot(&state, statePath, observe.Sequence, snapshot, false, options.Full, "")
+	view, snapshotErr := storeSessionSnapshot(&state, statePath, observe.Sequence, snapshot, false, options.Full, "", false)
 	if observeErr == nil && snapshotErr != nil {
 		observeErr = snapshotErr
 	}
@@ -508,13 +508,13 @@ func executeSessionAction(ctx context.Context, project Project, state *SessionSt
 			if isLocatorAction(action, logicalArgs) {
 				target = logicalArgs[1]
 			}
-			allowDelta := !options.Boxes && !snapshotResetsSessionContext(action)
-			view, commandErr = storeSessionSnapshot(state, statePath, snapshotSequence, snapshot, allowDelta, options.Full, target)
+			allowDelta := !options.Boxes
+			view, commandErr = storeSessionSnapshot(state, statePath, snapshotSequence, snapshot, allowDelta, options.Full, target, snapshotRefreshesReferences(action))
 		}
 	}
 	if action == "snapshot" && !options.Verbose {
 		var snapshotErr error
-		view, snapshotErr = storeSessionSnapshot(state, statePath, result.Sequence, result.Stdout, false, options.Full, "")
+		view, snapshotErr = storeSessionSnapshot(state, statePath, result.Sequence, result.Stdout, false, options.Full, "", false)
 		if snapshotErr != nil && commandErr == nil {
 			commandErr = snapshotErr
 		}
@@ -591,7 +591,7 @@ func runSessionDiagnose(ctx context.Context, args []string, out, errOut io.Write
 	var view snapshotPresentation
 	if snapshot != "" {
 		var snapshotErr error
-		view, snapshotErr = storeSessionSnapshot(&state, statePath, snapshotResult.Sequence, snapshot, false, options.Full, "")
+		view, snapshotErr = storeSessionSnapshot(&state, statePath, snapshotResult.Sequence, snapshot, false, options.Full, "", false)
 		if firstErr == nil && snapshotErr != nil {
 			firstErr = snapshotErr
 		}
@@ -1609,7 +1609,7 @@ func shouldObserveAfterSessionAction(action string) bool {
 	}
 }
 
-func snapshotResetsSessionContext(action string) bool {
+func snapshotRefreshesReferences(action string) bool {
 	switch action {
 	case "goto", "reload", "go-back", "go-forward", "tab-new", "tab-close", "tab-select":
 		return true

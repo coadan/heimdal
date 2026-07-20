@@ -48,9 +48,12 @@ The first two support sessions; the last supports repository tests.
 
 `session start` returns a semantic accessibility snapshot. State-changing
 actions return a semantic delta when it is smaller, with fresh refs for changed
-controls. Do not immediately call `observe` again. Prefer current refs and
-user-facing locators over CSS, XPath, or coordinates. Add `--full` when the
-complete tree is needed and `--boxes` only for coordinate or layout work.
+controls. Reloads and same-page navigation return fresh refs for every current
+control while omitting unchanged static content; materially different pages
+fall back to a full snapshot. Do not immediately call `observe` again. Prefer
+current refs and user-facing locators over CSS, XPath, or coordinates. Add
+`--full` when the complete tree is needed and `--boxes` only for coordinate or
+layout work.
 
 Use snapshots for structure and interaction. Request a screenshot only for
 visual appearance or layout. Use `--verbose` only when compact output omits a

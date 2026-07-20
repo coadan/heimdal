@@ -30,7 +30,7 @@ func TestSemanticSnapshotPreservesDeepControlsAndCollapsesWrappers(t *testing.T)
 func TestSemanticSnapshotDeltaReturnsChangedRefsAndContent(t *testing.T) {
 	previous := snapshotFixture("e", "Switch to dark theme")
 	current := snapshotFixture("f", "Switch to light theme")
-	view := semanticSnapshotDelta(previous, current, "e2")
+	view := semanticSnapshotDelta(previous, current, "e2", false)
 	if view.Mode != "delta" {
 		t.Fatalf("snapshot mode = %q, want delta:\n%s", view.Mode, view.Text)
 	}
@@ -40,7 +40,7 @@ func TestSemanticSnapshotDeltaReturnsChangedRefsAndContent(t *testing.T) {
 		}
 	}
 
-	refOnly := semanticSnapshotDelta(snapshotFixture("e", "Save"), snapshotFixture("f", "Save"), "e2")
+	refOnly := semanticSnapshotDelta(snapshotFixture("e", "Save"), snapshotFixture("f", "Save"), "e2", false)
 	if refOnly.Mode != "delta" || !strings.Contains(refOnly.Text, `[ref=f2]`) {
 		t.Fatalf("target ref refresh was omitted:\n%s", refOnly.Text)
 	}
@@ -52,9 +52,35 @@ func TestSemanticSnapshotDeltaReturnsChangedRefsAndContent(t *testing.T) {
 		fmt.Fprintf(&duplicatesBefore, "  - button \"Save\" [ref=e%d]\n", index)
 		fmt.Fprintf(&duplicatesAfter, "  - button \"Save\" [ref=f%d]\n", index)
 	}
-	duplicateTarget := semanticSnapshotDelta(duplicatesBefore.String(), duplicatesAfter.String(), "e8")
+	duplicateTarget := semanticSnapshotDelta(duplicatesBefore.String(), duplicatesAfter.String(), "e8", false)
 	if !strings.Contains(duplicateTarget.Text, `[ref=f8]`) || strings.Contains(duplicateTarget.Text, `[ref=f2]`) {
 		t.Fatalf("duplicate target mapped to the wrong fresh ref:\n%s", duplicateTarget.Text)
+	}
+}
+
+func TestSemanticSnapshotNavigationDeltaRefreshesInteractiveRefs(t *testing.T) {
+	previous := snapshotFixture("e", "Save")
+	current := snapshotFixture("f", "Save")
+	view := semanticSnapshotDelta(previous, current, "", true)
+	if view.Mode != "delta" {
+		t.Fatalf("navigation snapshot mode = %q, want delta:\n%s", view.Mode, view.Text)
+	}
+	for _, expected := range []string{"Current after navigation:", `button "Save" [ref=f2]`} {
+		if !strings.Contains(view.Text, expected) {
+			t.Fatalf("navigation delta omitted %q:\n%s", expected, view.Text)
+		}
+	}
+	if strings.Contains(view.Text, "Stable text 0") {
+		t.Fatalf("navigation delta retained unchanged static content:\n%s", view.Text)
+	}
+}
+
+func TestSemanticSnapshotNavigationDeltaFallsBackForNewPage(t *testing.T) {
+	previous := snapshotFixture("e", "Save")
+	current := "- main [ref=f1]:\n  - heading \"Different page\" [level=1] [ref=f2]\n  - link \"Continue\" [ref=f3]\n"
+	view := semanticSnapshotDelta(previous, current, "", true)
+	if view.Mode != "full" || !strings.Contains(view.Text, `heading "Different page"`) {
+		t.Fatalf("different navigation did not fall back to full snapshot: %#v", view)
 	}
 }
 
@@ -96,7 +122,7 @@ func TestStoreEmptySnapshotReplacesStaleState(t *testing.T) {
 	}
 	state := SessionState{SessionDir: directory, LastSnapshot: previous}
 	statePath := filepath.Join(directory, "session.json")
-	view, err := storeSessionSnapshot(&state, statePath, 2, "", false, false, "")
+	view, err := storeSessionSnapshot(&state, statePath, 2, "", false, false, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +144,16 @@ func BenchmarkSemanticSnapshotDeltaLargeDOM(b *testing.B) {
 	current := strings.Replace(previous, `button "Action 1000"`, `button "Action changed"`, 1)
 	b.ReportAllocs()
 	for index := 0; index < b.N; index++ {
-		_ = semanticSnapshotDelta(previous, current, "e1001")
+		_ = semanticSnapshotDelta(previous, current, "e1001", false)
+	}
+}
+
+func BenchmarkSemanticSnapshotNavigationDeltaLargeDOM(b *testing.B) {
+	previous := largeSnapshotFixture(2_000)
+	current := strings.ReplaceAll(previous, "ref=e", "ref=f")
+	b.ReportAllocs()
+	for index := 0; index < b.N; index++ {
+		_ = semanticSnapshotDelta(previous, current, "", true)
 	}
 }
 

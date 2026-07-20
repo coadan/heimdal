@@ -103,8 +103,11 @@ Headed and headless sessions have the same persistence and evidence behavior.
 Snapshots are semantic and omit coordinates by default. Add `--boxes` only
 when layout or coordinate-based interaction requires bounding boxes. A
 state-changing action returns only its semantic delta when that is smaller than
-the full state, while retaining the complete snapshot as an artifact. Add
-`--full` when the complete semantic tree is needed.
+the full state, while retaining the complete snapshot as an artifact. Reloads
+and other navigation actions also use a delta when the page remains
+substantially the same, but always include fresh refs for its current controls;
+a materially different page returns a full snapshot. Add `--full` when the
+complete semantic tree is needed.
 
 Known consecutive actions can share one agent round trip through a bounded JSON
 batch:

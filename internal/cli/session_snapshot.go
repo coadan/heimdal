@@ -37,7 +37,7 @@ type snapshotTreeNode struct {
 	Priority    int
 }
 
-func storeSessionSnapshot(state *SessionState, statePath string, sequence int, snapshot string, allowDelta, expanded bool, target string) (snapshotPresentation, error) {
+func storeSessionSnapshot(state *SessionState, statePath string, sequence int, snapshot string, allowDelta, expanded bool, target string, refreshInteractive bool) (snapshotPresentation, error) {
 	snapshot = strings.TrimSpace(snapshot)
 	var previous string
 	if state.LastSnapshot != "" {
@@ -58,7 +58,7 @@ func storeSessionSnapshot(state *SessionState, statePath string, sequence int, s
 	if expanded {
 		view = expandedSemanticSnapshot(snapshot)
 	} else if allowDelta && previous != "" {
-		view = semanticSnapshotDelta(previous, snapshot, target)
+		view = semanticSnapshotDelta(previous, snapshot, target, refreshInteractive)
 	}
 	view.Artifact = path
 	return view, nil
@@ -92,7 +92,7 @@ func expandedSemanticSnapshot(snapshot string) snapshotPresentation {
 	return snapshotPresentation{Text: text, Mode: "full", Omitted: omitted}
 }
 
-func semanticSnapshotDelta(previous, current, target string) snapshotPresentation {
+func semanticSnapshotDelta(previous, current, target string, refreshInteractive bool) snapshotPresentation {
 	previousNodes := parseSnapshotTree(previous)
 	currentNodes := parseSnapshotTree(current)
 	if len(previousNodes) == 0 || len(currentNodes) == 0 {
@@ -116,6 +116,7 @@ func semanticSnapshotDelta(previous, current, target string) snapshotPresentatio
 		}
 		changed[index] = true
 	}
+	actualChanged := len(changed)
 
 	if target != "" {
 		var targetIdentity string
@@ -160,8 +161,15 @@ func semanticSnapshotDelta(previous, current, target string) snapshotPresentatio
 			meaningful++
 		}
 	}
-	if len(changed)+len(removed) > meaningful/2 {
+	if actualChanged+len(removed) > meaningful/2 {
 		return semanticSnapshot(current)
+	}
+	if refreshInteractive {
+		for index, node := range currentNodes {
+			if node.Interactive {
+				changed[index] = true
+			}
+		}
 	}
 	if len(changed) == 0 && len(removed) == 0 {
 		return snapshotPresentation{Text: "No semantic changes.", Mode: "delta"}
@@ -171,7 +179,11 @@ func semanticSnapshotDelta(previous, current, target string) snapshotPresentatio
 	text, omitted := renderSnapshotSelection(currentNodes, selected)
 	var output strings.Builder
 	if text != "" {
-		output.WriteString("Changed:\n")
+		if refreshInteractive {
+			output.WriteString("Current after navigation:\n")
+		} else {
+			output.WriteString("Changed:\n")
+		}
 		output.WriteString(text)
 	}
 	if len(removed) > 0 {
