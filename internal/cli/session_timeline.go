@@ -12,6 +12,8 @@ import (
 
 type SessionTimelineEntry struct {
 	Sequence           int       `json:"sequence"`
+	Actor              string    `json:"actor,omitempty"`
+	ActorSequence      int       `json:"actor_sequence,omitempty"`
 	StartedAt          time.Time `json:"started_at"`
 	DurationMS         int64     `json:"duration_ms"`
 	Category           string    `json:"category"`
@@ -26,6 +28,8 @@ type SessionTimelineEntry struct {
 type SessionTimeline struct {
 	SchemaVersion int                    `json:"schema_version"`
 	Session       string                 `json:"session"`
+	Group         string                 `json:"group,omitempty"`
+	Actors        []string               `json:"actors,omitempty"`
 	RunID         string                 `json:"run_id"`
 	Root          string                 `json:"root"`
 	URL           string                 `json:"url,omitempty"`
@@ -41,6 +45,8 @@ type SessionTimeline struct {
 type SessionReport struct {
 	SchemaVersion int                    `json:"schema_version"`
 	Session       string                 `json:"session"`
+	Group         string                 `json:"group,omitempty"`
+	Actors        []string               `json:"actors,omitempty"`
 	RunID         string                 `json:"run_id"`
 	Status        string                 `json:"status"`
 	DurationMS    int64                  `json:"duration_ms"`
@@ -158,7 +164,7 @@ func buildSessionTimeline(state SessionState) (SessionTimeline, error) {
 	if err != nil {
 		return SessionTimeline{}, err
 	}
-	timeline := SessionTimeline{SchemaVersion: 1, Session: state.Name, RunID: state.RunID, Root: state.Root, URL: state.URL, StartedAt: state.StartedAt, StoppedAt: state.StoppedAt, Actions: len(actions), Entries: make([]SessionTimelineEntry, 0, len(actions))}
+	timeline := SessionTimeline{SchemaVersion: 1, Session: state.Name, Group: state.Group, RunID: state.RunID, Root: state.Root, URL: state.URL, StartedAt: state.StartedAt, StoppedAt: state.StoppedAt, Actions: len(actions), Entries: make([]SessionTimelineEntry, 0, len(actions))}
 	testLine := 4
 	if state.URL != "" {
 		testLine++
@@ -197,11 +203,15 @@ func summarizeSessionTimeline(state SessionState, timeline SessionTimeline) Sess
 	if timeline.Failures > 0 {
 		status = "issues"
 	}
-	report := SessionReport{SchemaVersion: 1, Session: state.Name, RunID: state.RunID, Status: status, DurationMS: finished.Sub(state.StartedAt).Milliseconds(), Actions: timeline.Actions, Failures: timeline.Failures, Snapshots: timeline.Snapshots, Checkpoints: timeline.Checkpoints, Categories: map[string]int{}, Artifacts: map[string]string{"directory": state.SessionDir, "actions": state.ActionLog}}
+	report := SessionReport{SchemaVersion: 1, Session: state.Name, Group: state.Group, RunID: state.RunID, Status: status, DurationMS: finished.Sub(state.StartedAt).Milliseconds(), Actions: timeline.Actions, Failures: timeline.Failures, Snapshots: timeline.Snapshots, Checkpoints: timeline.Checkpoints, Categories: map[string]int{}, Artifacts: map[string]string{"directory": state.SessionDir, "actions": state.ActionLog}}
 	for _, entry := range timeline.Entries {
 		report.Categories[entry.Category]++
 		if entry.Status == "failed" && len(report.Issues) < 20 {
-			report.Issues = append(report.Issues, fmt.Sprintf("action %d (%s): %s", entry.Sequence, commandString(entry.Command), entry.Summary))
+			actor := ""
+			if entry.Actor != "" {
+				actor = " actor " + entry.Actor
+			}
+			report.Issues = append(report.Issues, fmt.Sprintf("action %d%s (%s): %s", entry.Sequence, actor, commandString(entry.Command), entry.Summary))
 		}
 		if entry.Category == "console" && strings.Contains(strings.ToLower(entry.Summary), "error") && len(report.Issues) < 20 {
 			report.Issues = append(report.Issues, fmt.Sprintf("console action %d: %s", entry.Sequence, entry.Summary))
@@ -252,7 +262,11 @@ func timelineActionSummary(action SessionActionRecord) string {
 
 func printSessionTimeline(out io.Writer, timeline SessionTimeline) {
 	for _, entry := range timeline.Entries {
-		fmt.Fprintf(out, "%d. %-11s %-10s %s", entry.Sequence, entry.Status, entry.Category, commandString(entry.Command))
+		actor := ""
+		if entry.Actor != "" {
+			actor = "[" + entry.Actor + "] "
+		}
+		fmt.Fprintf(out, "%d. %s%-11s %-10s %s", entry.Sequence, actor, entry.Status, entry.Category, commandString(entry.Command))
 		if entry.Summary != "" && entry.Summary != commandString(entry.Command) {
 			fmt.Fprintf(out, " — %s", entry.Summary)
 		}

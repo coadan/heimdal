@@ -158,6 +158,21 @@ the stepwise path. Keep `wait --change` outside an atomic batch so its
 retained-snapshot race check remains active. Action JSON is compact by default;
 use `--json=full` only when repeated session metadata is needed.
 
+For a bounded multi-user flow, use one group instead of independently managing
+several app fixtures:
+
+```bash
+heimdal session group start --actors host,guest
+heimdal session click --actor guest e12
+heimdal session group timeline --json
+heimdal session group stop
+```
+
+Actors have isolated Playwright browser state but share the first actor's app
+process and URL. Ordinary session commands accept `--actor`; add `--group` only
+when the actor name is ambiguous across active groups. Stop the group once so
+non-owning browsers close before the shared app owner.
+
 ## Diagnose from summaries first
 
 For an interactive failure, use one diagnostic packet:

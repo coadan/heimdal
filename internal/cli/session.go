@@ -27,6 +27,8 @@ const (
 type SessionOptions struct {
 	Root       string
 	Name       string
+	Group      string
+	Actor      string
 	JSON       bool
 	RunID      string
 	Artifacts  string
@@ -55,6 +57,8 @@ type SessionProjectCache struct {
 type SessionState struct {
 	SchemaVersion int                  `json:"schema_version"`
 	Name          string               `json:"name"`
+	Group         string               `json:"group,omitempty"`
+	Actor         string               `json:"actor,omitempty"`
 	RunID         string               `json:"run_id"`
 	Root          string               `json:"root"`
 	Branch        string               `json:"branch"`
@@ -101,6 +105,8 @@ type SessionResponse struct {
 	SchemaVersion   int                `json:"schema_version"`
 	Status          string             `json:"status"`
 	Session         string             `json:"session"`
+	Group           string             `json:"group,omitempty"`
+	Actor           string             `json:"actor,omitempty"`
 	RunID           string             `json:"run_id,omitempty"`
 	Root            string             `json:"root,omitempty"`
 	URL             string             `json:"url,omitempty"`
@@ -163,6 +169,8 @@ func runSession(ctx context.Context, args []string, out, errOut io.Writer) int {
 	}
 
 	switch args[0] {
+	case "group":
+		return runSessionGroup(ctx, args[1:], out, errOut)
 	case "start":
 		return runSessionStart(ctx, args[1:], out, errOut)
 	case "stop":
@@ -199,6 +207,11 @@ func runSession(ctx context.Context, args []string, out, errOut io.Writer) int {
 const sessionUsage = `Heimdal interactive Playwright sessions
 
 Usage:
+  heimdal session group start --actors ACTOR,ACTOR [options]
+  heimdal session group status [--name GROUP] [options]
+  heimdal session group stop [--name GROUP] [options]
+  heimdal session group timeline [--name GROUP] [options]
+  heimdal session group report [--name GROUP] [options]
   heimdal session start [options]
   heimdal session stop [options]
   heimdal session status [options]
@@ -234,6 +247,12 @@ Start options:
   --force          Replace existing Heimdal session state
   --json           Print only agent-readable JSON
   --json=full      Include repeated session metadata in JSON actions
+
+Group options:
+  --actors LIST    Comma-separated 2 to 8 unique actor names (start only)
+  --name GROUP     Session group name (default: default)
+  --actor ACTOR    Route an ordinary session command to a group actor
+  --group GROUP    Select a group when more than one contains the actor
 
 Wait options:
   --role ROLE      Wait for an accessible role, optionally narrowed by --name
@@ -273,6 +292,10 @@ Measure options:
   --json           Print bounded structured layout evidence
 
 Examples:
+  heimdal session group start --actors host,guest
+  heimdal session click --actor guest e12
+  heimdal session group timeline --json
+  heimdal session group stop
   heimdal session start --name qa --headed
   heimdal session observe
   heimdal session click e12
@@ -345,6 +368,8 @@ func startSession(ctx context.Context, project Project, options SessionOptions, 
 	state := SessionState{
 		SchemaVersion: sessionStateVersion,
 		Name:          name,
+		Group:         sanitize(options.Group),
+		Actor:         sanitize(options.Actor),
 		RunID:         runID,
 		Root:          project.Root,
 		Branch:        project.Branch,
@@ -786,6 +811,18 @@ func parseSessionOptions(args []string) (SessionOptions, error) {
 				return options, err
 			}
 			i, options.Name = next, value
+		case "--group":
+			value, next, err := nextValue(args, i, arg)
+			if err != nil {
+				return options, err
+			}
+			i, options.Group = next, value
+		case "--actor":
+			value, next, err := nextValue(args, i, arg)
+			if err != nil {
+				return options, err
+			}
+			i, options.Actor = next, value
 		case "--run-id":
 			value, next, err := nextValue(args, i, arg)
 			if err != nil {
@@ -1363,6 +1400,8 @@ func sessionResponse(state SessionState, result sessionCommandResult, commandErr
 		SchemaVersion: 1,
 		Status:        "passed",
 		Session:       state.Name,
+		Group:         state.Group,
+		Actor:         state.Actor,
 		RunID:         state.RunID,
 		Root:          state.Root,
 		URL:           state.URL,
@@ -1630,6 +1669,8 @@ func compactSessionResponse(response SessionResponse) SessionResponse {
 		SchemaVersion:   response.SchemaVersion,
 		Status:          response.Status,
 		Session:         response.Session,
+		Group:           response.Group,
+		Actor:           response.Actor,
 		Action:          response.Action,
 		Command:         response.Command,
 		Output:          response.Output,

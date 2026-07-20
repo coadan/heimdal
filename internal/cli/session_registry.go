@@ -121,6 +121,13 @@ func readSessionIndexes(name string) ([]sessionIndex, error) {
 }
 
 func discoverSession(options SessionOptions) (Project, SessionState, string, error) {
+	if options.Actor != "" || options.Group != "" {
+		resolved, err := resolveSessionGroupActor(options)
+		if err != nil {
+			return Project{}, SessionState{}, "", err
+		}
+		return discoverSession(resolved)
+	}
 	start := options.Root
 	if start == "" {
 		start = "."

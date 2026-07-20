@@ -286,6 +286,22 @@ process before opening the browser and waits for `session.url` to respond.
 `session stop` closes the Playwright session and that app process. Use
 `--no-server` to connect to an app that is already running.
 
+For bounded multi-user flows, start isolated Playwright actors against one
+shared app fixture:
+
+```bash
+heimdal session group start --actors host,guest
+heimdal session click --actor guest e12
+heimdal session group timeline --json
+heimdal session group stop
+```
+
+The first actor owns the configured app process; the other actors reuse its URL
+without starting duplicate servers. Each actor keeps independent browser
+state, while group timeline and report commands merge their evidence in time
+order. Use `--group NAME` when the same actor name appears in multiple active
+groups.
+
 ## Configure a project
 
 `heimdal init` creates `.heimdal.json`. A project that starts its app for
