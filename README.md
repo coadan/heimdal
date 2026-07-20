@@ -208,27 +208,31 @@ Run `heimdal help` for the complete command summary and
 
 ## Agent benchmark
 
-On 2026-07-20, two fresh coding agents started from the same React commit and
+On 2026-07-20, two fresh coding agents started from the same React commit with
+dependencies preinstalled and the same model and reasoning settings. Each
 implemented, tested, built, and browser-verified a persistent theme toggle. One
 used the official `playwright-cli` directly; the other used Heimdal. Both passed
-the task, including a click and reload in the same named browser session.
+the task with independent diffs, including a real click and reload in one named
+browser session.
 
 | Measure | Playwright CLI | Heimdal |
 | --- | ---: | ---: |
-| Persistent-browser invocations | 9 | 7 |
-| Browser output | 5.1 KB | 4.5 KB |
-| All shell commands | 27 | 23 |
-| Wall time | 368.5 s | 264.2 s |
-| Model input tokens | 1,252,500 | 968,258 |
-| Model output tokens | 13,660 | 13,572 |
+| Core browser invocations | 10 | 7 |
+| Core browser output | 5.3 KB | 4.2 KB |
+| All shell commands | 23 | 21 |
+| All command output | 62.1 KB | 52.4 KB |
+| Wall time | 345.2 s | 302.2 s |
+| Model input tokens | 980,403 | 722,528 |
+| Model output tokens | 11,461 | 11,719 |
 
-Heimdal used 22% fewer browser-session invocations by returning Playwright's
-own fresh snapshot after startup and state changes. The full run used 23% fewer
-input tokens and finished 28% sooner, but this is one controlled run rather
-than a general performance claim; agent choices vary and token totals include
-cached context. The result supports Heimdal's narrower rationale: keep
-Playwright as the runtime while giving terminal agents compact, persistent,
-project-scoped browser control.
+Heimdal used 30% fewer core browser invocations and 19% less core browser
+output by returning semantic state with startup and state-changing actions. The
+full run used 26% fewer input tokens, emitted 16% less command output, and
+finished 12% sooner; model output tokens were 2% higher. Core browser figures
+exclude tool help and optional screenshot or diagnosis work, while the
+whole-task command, output, time, and token totals include those detours. This
+is one controlled pair rather than a general performance claim: agent choices
+vary and token totals include cached context.
 
 The current implementation also captures Playwright's generated locator from
 the action itself instead of launching a second locator command. A deterministic
