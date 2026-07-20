@@ -28,7 +28,7 @@ func TestRunInventoryFiltersGroupsComparesAndPins(t *testing.T) {
 		t.Fatalf("latest failed = %q, %v", latestFailed, err)
 	}
 	comparison, err := compareRuns(root, "failed-old", "failed-new")
-	if err != nil || !comparison.SameFailure || comparison.DurationDeltaMS != -2000 {
+	if err != nil || !comparison.SameFailure || !comparison.SameSemanticFailure || comparison.SameExactFailure || comparison.DurationDeltaMS != -2000 {
 		t.Fatalf("comparison = %#v, %v", comparison, err)
 	}
 	pin, err := pinRun(root, "failed-new", true)

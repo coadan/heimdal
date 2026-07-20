@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -35,11 +36,25 @@ func TestRunAnalysisExtractsCountsFailureWarningsAndFingerprint(t *testing.T) {
 	if analysis.PrimaryFailure == nil || analysis.PrimaryFailure.Test != "settings › saves changes" || analysis.PrimaryFailure.Location != "tests/browser/settings.spec.ts:41:3" || analysis.PrimaryFailure.Step != "waitForConfirmation" {
 		t.Fatalf("primary failure = %#v", analysis.PrimaryFailure)
 	}
-	if analysis.PrimaryFailure.Fingerprint == "" || len(analysis.PrimaryFailure.Fingerprint) != 16 {
-		t.Fatalf("failure fingerprint = %q", analysis.PrimaryFailure.Fingerprint)
+	if analysis.PrimaryFailure.Class != "timeout" || analysis.PrimaryFailure.Fingerprint == "" || analysis.PrimaryFailure.Fingerprint != analysis.PrimaryFailure.SemanticFingerprint || len(analysis.PrimaryFailure.ExactFingerprint) != 16 {
+		t.Fatalf("failure fingerprints = %#v", analysis.PrimaryFailure)
 	}
 	if len(analysis.Warnings) != 1 || analysis.Warnings[0].Source != "runner" || analysis.Warnings[0].Count != 2 {
 		t.Fatalf("warnings = %#v", analysis.Warnings)
+	}
+}
+
+func TestFailureFingerprintsSeparateSemanticAndExactIdentity(t *testing.T) {
+	first := PrimaryFailure{Test: "quest › completes", Location: "tests/quest.spec.ts:41:3", Step: "waitForQuest", Message: "Error: Timed out waiting for Quest point 4"}
+	second := first
+	second.Message += "\nExpected: visible\nReceived: hidden after 67.2s"
+	setFailureFingerprints(&first)
+	setFailureFingerprints(&second)
+	if first.SemanticFingerprint != second.SemanticFingerprint || first.Fingerprint != first.SemanticFingerprint {
+		t.Fatalf("semantic fingerprints differ: %#v %#v", first, second)
+	}
+	if first.ExactFingerprint == second.ExactFingerprint {
+		t.Fatalf("exact fingerprints unexpectedly match: %#v %#v", first, second)
 	}
 }
 
@@ -100,6 +115,48 @@ func TestRunEnvironmentProvenanceRecordsNamesAndStateWithoutValues(t *testing.T)
 		if !strings.Contains(text, expected) {
 			t.Fatalf("environment provenance omitted %s: %s", expected, text)
 		}
+	}
+}
+
+func TestRunInvocationIncludesSafeFixtureAndGitProvenance(t *testing.T) {
+	root := t.TempDir()
+	runGit := func(args ...string) {
+		cmd := exec.Command("git", append([]string{"-C", root}, args...)...)
+		cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=Test", "GIT_AUTHOR_EMAIL=test@example.com", "GIT_COMMITTER_NAME=Test", "GIT_COMMITTER_EMAIL=test@example.com")
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, output)
+		}
+	}
+	runGit("init", "-q")
+	tracked := filepath.Join(root, "tracked.txt")
+	if err := os.WriteFile(tracked, []byte("one\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", "tracked.txt")
+	runGit("commit", "-qm", "initial")
+	commit, dirty, dirtyHash := gitRunState(root)
+	if commit == "" || dirty || dirtyHash != "" {
+		t.Fatalf("clean state = %q, %v, %q", commit, dirty, dirtyHash)
+	}
+	if err := os.WriteFile(tracked, []byte("two\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, dirty, firstHash := gitRunState(root)
+	if err := os.WriteFile(tracked, []byte("three\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, _, secondHash := gitRunState(root)
+	if !dirty || firstHash == "" || firstHash == secondHash {
+		t.Fatalf("dirty hashes = %q, %q", firstHash, secondHash)
+	}
+	flags := []RunEnvironmentVariable{{Name: "BROWSER_FIXTURE_ENABLED", Set: true, Source: "tracked"}}
+	invocation := captureRunInvocation([]string{"tests/browser/design.spec.ts", "--grep", "layout"}, flags, commit, true, secondHash)
+	encoded, err := json.Marshal(invocation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if invocation.Commit != commit || !invocation.Dirty || invocation.DirtyHash != secondHash || len(invocation.FixtureFlags) != 1 || strings.Contains(string(encoded), "secret") {
+		t.Fatalf("invocation = %s", encoded)
 	}
 }
 

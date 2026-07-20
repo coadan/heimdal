@@ -2,7 +2,9 @@ package cli
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -92,6 +94,26 @@ func gitValue(root string, args ...string) string {
 		return ""
 	}
 	return strings.TrimSpace(stdout.String())
+}
+
+func gitRunState(root string) (commit string, dirty bool, dirtyHash string) {
+	commit = gitValue(root, "rev-parse", "HEAD")
+	status := exec.Command("git", "-C", root, "status", "--porcelain=v1", "-z", "--untracked-files=all")
+	var state bytes.Buffer
+	status.Stdout = &state
+	if err := status.Run(); err != nil || state.Len() == 0 {
+		return commit, false, ""
+	}
+	dirty = true
+	digest := sha256.New()
+	_, _ = digest.Write(state.Bytes())
+	// Include tracked file content changes without retaining their contents.
+	// Porcelain status contributes untracked paths and all change classifications.
+	diff := exec.Command("git", "-C", root, "diff", "--no-ext-diff", "--binary", "HEAD", "--")
+	diff.Stdout = digest
+	diff.Stderr = io.Discard
+	_ = diff.Run()
+	return commit, true, fmt.Sprintf("%x", digest.Sum(nil)[:8])
 }
 
 func detectPackageManager(root string) string {

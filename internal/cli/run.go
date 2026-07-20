@@ -107,6 +107,7 @@ type Artifacts struct {
 
 func executeRun(ctx context.Context, project Project, options RunOptions, out, errOut io.Writer) (RunResult, error) {
 	started := time.Now().UTC()
+	commit, dirty, dirtyHash := gitRunState(project.Root)
 	runID := options.RunID
 	if runID == "" {
 		runID = defaultRunID(project.Branch, started)
@@ -154,6 +155,7 @@ func executeRun(ctx context.Context, project Project, options RunOptions, out, e
 	}
 	env := runEnvironment(project, runID, runDir, testOutput, report, port)
 	environment := runEnvironmentProvenance(project.Config.Playwright, env)
+	invocation := captureRunInvocation(options.Forwarded, environment, commit, dirty, dirtyHash)
 	forwarded := append([]string(nil), options.Forwarded...)
 	if options.Headed && !containsFlag(forwarded, "--headed") {
 		forwarded = append(forwarded, "--headed")
@@ -202,7 +204,7 @@ func executeRun(ctx context.Context, project Project, options RunOptions, out, e
 			CommandLine:   commandString(command),
 			Playwright:    project.PlaywrightConfig,
 			Port:          port,
-			Invocation:    parseRunInvocation(options.Forwarded),
+			Invocation:    invocation,
 			Environment:   environment,
 			Artifacts: Artifacts{
 				RunDir:     runDir,
@@ -240,7 +242,7 @@ func executeRun(ctx context.Context, project Project, options RunOptions, out, e
 		CommandLine:   commandString(command),
 		Playwright:    project.PlaywrightConfig,
 		Port:          port,
-		Invocation:    parseRunInvocation(options.Forwarded),
+		Invocation:    invocation,
 		Environment:   environment,
 		StdoutTail:    stdoutTail.String(),
 		StderrTail:    stderrTail.String(),

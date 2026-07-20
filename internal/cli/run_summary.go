@@ -29,11 +29,14 @@ type TestCounts struct {
 }
 
 type PrimaryFailure struct {
-	Test        string `json:"test,omitempty"`
-	Location    string `json:"location,omitempty"`
-	Message     string `json:"message"`
-	Step        string `json:"step,omitempty"`
-	Fingerprint string `json:"fingerprint"`
+	Test                string `json:"test,omitempty"`
+	Location            string `json:"location,omitempty"`
+	Message             string `json:"message"`
+	Step                string `json:"step,omitempty"`
+	Class               string `json:"class,omitempty"`
+	Fingerprint         string `json:"fingerprint"`
+	SemanticFingerprint string `json:"semantic_fingerprint"`
+	ExactFingerprint    string `json:"exact_fingerprint"`
 }
 
 type RunWarning struct {
@@ -43,10 +46,14 @@ type RunWarning struct {
 }
 
 type RunInvocation struct {
-	TestFiles []string `json:"test_files,omitempty"`
-	Grep      string   `json:"grep,omitempty"`
-	Project   string   `json:"project,omitempty"`
-	Retries   string   `json:"retries,omitempty"`
+	TestFiles    []string                 `json:"test_files,omitempty"`
+	Grep         string                   `json:"grep,omitempty"`
+	Project      string                   `json:"project,omitempty"`
+	Retries      string                   `json:"retries,omitempty"`
+	Commit       string                   `json:"commit,omitempty"`
+	Dirty        bool                     `json:"dirty"`
+	DirtyHash    string                   `json:"dirty_state_hash,omitempty"`
+	FixtureFlags []RunEnvironmentVariable `json:"fixture_flags,omitempty"`
 }
 
 type RunEnvironmentVariable struct {
@@ -484,10 +491,72 @@ func parsePrimaryFailure(output string) *PrimaryFailure {
 	if failure.Message == "" {
 		return nil
 	}
-	fingerprintInput := strings.ToLower(strings.Join([]string{failure.Test, failureLocationFile(failure.Location), normalizeFailureMessage(failure.Message), failure.Step}, "|"))
-	digest := sha256.Sum256([]byte(fingerprintInput))
-	failure.Fingerprint = fmt.Sprintf("%x", digest[:8])
+	setFailureFingerprints(&failure)
 	return &failure
+}
+
+func setFailureFingerprints(failure *PrimaryFailure) {
+	if failure == nil {
+		return
+	}
+	failure.Class = failureClass(failure.Message)
+	primaryLine := failure.Message
+	if line, _, found := strings.Cut(primaryLine, "\n"); found {
+		primaryLine = line
+	}
+	semanticDetail := failure.Step
+	if semanticDetail == "" {
+		semanticDetail = normalizeFailureMessage(primaryLine)
+	}
+	semanticInput := strings.ToLower(strings.Join([]string{
+		failure.Test,
+		failureLocationFile(failure.Location),
+		failure.Class,
+		semanticDetail,
+	}, "|"))
+	exactInput := strings.Join([]string{failure.Test, failure.Location, failure.Step, failure.Message}, "|")
+	semantic := sha256.Sum256([]byte(semanticInput))
+	exact := sha256.Sum256([]byte(exactInput))
+	failure.SemanticFingerprint = fmt.Sprintf("%x", semantic[:8])
+	failure.ExactFingerprint = fmt.Sprintf("%x", exact[:8])
+	// Fingerprint remains the stable semantic identity for compatibility with
+	// existing reports, history, and retention configuration.
+	failure.Fingerprint = failure.SemanticFingerprint
+}
+
+func failureClass(message string) string {
+	lower := strings.ToLower(message)
+	switch {
+	case strings.Contains(lower, "timeout") || strings.Contains(lower, "timed out"):
+		return "timeout"
+	case strings.Contains(lower, "assertionerror") || (strings.Contains(lower, "expected:") && strings.Contains(lower, "received:")):
+		return "assertion"
+	case strings.Contains(lower, "typeerror"):
+		return "type_error"
+	case strings.Contains(lower, "referenceerror"):
+		return "reference_error"
+	case strings.Contains(lower, "locator"):
+		return "locator"
+	default:
+		return "error"
+	}
+}
+
+func semanticFailureFingerprint(failure *PrimaryFailure) string {
+	if failure == nil {
+		return ""
+	}
+	if failure.SemanticFingerprint != "" {
+		return failure.SemanticFingerprint
+	}
+	return failure.Fingerprint
+}
+
+func exactFailureFingerprint(failure *PrimaryFailure) string {
+	if failure == nil {
+		return ""
+	}
+	return failure.ExactFingerprint
 }
 
 func failureLocationFile(location string) string {
@@ -569,9 +638,19 @@ func parseRunInvocation(args []string) RunInvocation {
 	return invocation
 }
 
+func captureRunInvocation(args []string, environment []RunEnvironmentVariable, commit string, dirty bool, dirtyHash string) RunInvocation {
+	invocation := parseRunInvocation(args)
+	invocation.Commit, invocation.Dirty, invocation.DirtyHash = commit, dirty, dirtyHash
+	invocation.FixtureFlags = append([]RunEnvironmentVariable(nil), environment...)
+	return invocation
+}
+
 func isLikelyTestPath(value string) bool {
-	lower := strings.ToLower(value)
-	return strings.Contains(lower, ".spec.") || strings.Contains(lower, ".test.")
+	lower := strings.TrimPrefix(strings.ToLower(filepath.ToSlash(value)), "./")
+	return strings.Contains(lower, ".spec.") || strings.Contains(lower, ".test.") ||
+		strings.HasPrefix(lower, "test/") || strings.HasPrefix(lower, "tests/") ||
+		strings.HasPrefix(lower, "e2e/") || strings.Contains(lower, "/tests/") ||
+		strings.Contains(lower, "/e2e/")
 }
 
 func runEnvironmentProvenance(config PlaywrightConfig, environment []string) []RunEnvironmentVariable {

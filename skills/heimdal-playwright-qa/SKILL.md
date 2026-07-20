@@ -236,9 +236,12 @@ heimdal runs compare <old-run> <new-run> --json
 heimdal runs pin <run-id>
 ```
 
-Repeated failures are grouped by fingerprint. Use `latest-failed` with report
-or trace when diagnosing the newest failure. Pin only evidence that must outlive
-normal retention, then unpin it with `runs pin <run-id> --remove`.
+Repeated failures are grouped by semantic fingerprint; comparison separately
+reports exact-message equality. Inventory provenance includes selectors, Git
+commit/dirty identity, and configured fixture-variable names plus set/unset
+state, never their values. Use `latest-failed` with report or trace when
+diagnosing the newest failure. Pin only evidence that must outlive normal
+retention, then unpin it with `runs pin <run-id> --remove`.
 
 Use `heimdal gc --dry-run` before manual artifact cleanup. Retention preserves
 pins, active runs, recent runs, and the configured number of distinct failure

@@ -33,6 +33,8 @@ Usage:
 
 Usage:
   heimdal runs compare OLD NEW [--dir PATH] [--json]
+
+Reports stable semantic failure equality separately from exact-message equality.
 `,
 	"runs pin": `Protect or unprotect a run from artifact retention
 

@@ -384,7 +384,7 @@ func inspectArtifactRuns(root string, now time.Time) ([]artifactRun, error) {
 				enrichRunResult(&result)
 			}
 			if result.PrimaryFailure != nil {
-				run.Fingerprint = result.PrimaryFailure.Fingerprint
+				run.Fingerprint = semanticFailureFingerprint(result.PrimaryFailure)
 			}
 			run.SizeBytes = result.Artifacts.RunBytes
 			if run.SizeBytes == 0 {

@@ -44,11 +44,12 @@ type RunInventoryItem struct {
 }
 
 type RunFailureGroup struct {
-	Fingerprint string    `json:"fingerprint"`
-	Message     string    `json:"message"`
-	Count       int       `json:"count"`
-	LatestAt    time.Time `json:"latest_at"`
-	LatestRunID string    `json:"latest_run_id"`
+	Fingerprint         string    `json:"fingerprint"`
+	SemanticFingerprint string    `json:"semantic_fingerprint"`
+	Message             string    `json:"message"`
+	Count               int       `json:"count"`
+	LatestAt            time.Time `json:"latest_at"`
+	LatestRunID         string    `json:"latest_run_id"`
 }
 
 type RunsListResult struct {
@@ -67,6 +68,8 @@ type RunComparison struct {
 	DurationDeltaMS      int64            `json:"duration_delta_ms"`
 	SizeDeltaBytes       int64            `json:"size_delta_bytes"`
 	SameFailure          bool             `json:"same_failure"`
+	SameSemanticFailure  bool             `json:"same_semantic_failure"`
+	SameExactFailure     bool             `json:"same_exact_failure"`
 	ExecutedTestsDelta   int              `json:"executed_tests_delta"`
 	UnexpectedTestsDelta int              `json:"unexpected_tests_delta"`
 }
@@ -154,6 +157,9 @@ func runRuns(args []string, out, errOut io.Writer) int {
 			_ = writeJSONTo(out, comparison)
 		} else {
 			fmt.Fprintf(out, "%s (%s) -> %s (%s): duration %s%dms, size %s%d bytes\n", comparison.Old.RunID, comparison.Old.Status, comparison.New.RunID, comparison.New.Status, signedPrefix(comparison.DurationDeltaMS), comparison.DurationDeltaMS, signedPrefix(comparison.SizeDeltaBytes), comparison.SizeDeltaBytes)
+			if comparison.Old.PrimaryFailure != nil && comparison.New.PrimaryFailure != nil {
+				fmt.Fprintf(out, "  failure identity: semantic same %t, exact same %t\n", comparison.SameSemanticFailure, comparison.SameExactFailure)
+			}
 		}
 		return 0
 	case "pin":
@@ -329,13 +335,14 @@ func inventoryMatchesTest(item RunInventoryItem, query string) bool {
 func groupRunFailures(items []RunInventoryItem) []RunFailureGroup {
 	groups := map[string]RunFailureGroup{}
 	for _, item := range items {
-		if item.PrimaryFailure == nil || item.PrimaryFailure.Fingerprint == "" {
+		fingerprint := semanticFailureFingerprint(item.PrimaryFailure)
+		if fingerprint == "" {
 			continue
 		}
-		group := groups[item.PrimaryFailure.Fingerprint]
-		group.Fingerprint, group.Message, group.Count = item.PrimaryFailure.Fingerprint, item.PrimaryFailure.Message, group.Count+1
+		group := groups[fingerprint]
+		group.Fingerprint, group.SemanticFingerprint, group.Count = fingerprint, fingerprint, group.Count+1
 		if item.StartedAt.After(group.LatestAt) {
-			group.LatestAt, group.LatestRunID = item.StartedAt, item.RunID
+			group.Message, group.LatestAt, group.LatestRunID = item.PrimaryFailure.Message, item.StartedAt, item.RunID
 		}
 		groups[group.Fingerprint] = group
 	}
@@ -366,7 +373,11 @@ func compareRuns(root, oldSelector, newSelector string) (RunComparison, error) {
 	comparison := RunComparison{SchemaVersion: 1, Old: oldItem, New: newItem, StatusChanged: oldItem.Status != newItem.Status, DurationDeltaMS: newItem.DurationMS - oldItem.DurationMS, SizeDeltaBytes: newItem.SizeBytes - oldItem.SizeBytes}
 	comparison.ExecutedTestsDelta = testCount(newItem.Tests, func(counts *TestCounts) int { return counts.Executed }) - testCount(oldItem.Tests, func(counts *TestCounts) int { return counts.Executed })
 	comparison.UnexpectedTestsDelta = testCount(newItem.Tests, func(counts *TestCounts) int { return counts.Unexpected }) - testCount(oldItem.Tests, func(counts *TestCounts) int { return counts.Unexpected })
-	comparison.SameFailure = oldItem.PrimaryFailure != nil && newItem.PrimaryFailure != nil && oldItem.PrimaryFailure.Fingerprint != "" && oldItem.PrimaryFailure.Fingerprint == newItem.PrimaryFailure.Fingerprint
+	oldSemantic, newSemantic := semanticFailureFingerprint(oldItem.PrimaryFailure), semanticFailureFingerprint(newItem.PrimaryFailure)
+	oldExact, newExact := exactFailureFingerprint(oldItem.PrimaryFailure), exactFailureFingerprint(newItem.PrimaryFailure)
+	comparison.SameSemanticFailure = oldSemantic != "" && oldSemantic == newSemantic
+	comparison.SameExactFailure = oldExact != "" && oldExact == newExact
+	comparison.SameFailure = comparison.SameSemanticFailure
 	return comparison, nil
 }
 

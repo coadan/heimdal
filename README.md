@@ -72,8 +72,10 @@ Pass Playwright arguments after `--`:
 heimdal run -- tests/browser/example.spec.ts --grep "opens the menu"
 ```
 
-Run JSON includes parsed test counts, invocation selectors, deduplicated
+Run JSON includes parsed test counts, invocation provenance, deduplicated
 warnings, artifact sizes, and a fingerprinted primary failure when available.
+A semantic fingerprint groups the same test/helper/failure class despite added
+diagnostic detail; an exact fingerprint distinguishes the full messages.
 If Playwright discovers tests but executes none, Heimdal returns status
 `skipped` with a nonzero exit instead of treating the run as passing.
 `heimdal report --json` omits raw log tails and long file inventories by
@@ -108,9 +110,10 @@ heimdal runs compare older-run newer-run --json
 heimdal runs pin important-run
 ```
 
-The inventory includes test selectors, status, timing, size, interrupted state,
-and repeated failure fingerprints. `latest-failed` also works with `report` and
-`trace`; pinned runs are protected from retention.
+The inventory includes test selectors, safe fixture-flag state, Git
+commit/dirty identity, status, timing, size, interrupted state, and repeated
+failure fingerprints. `latest-failed` also works with `report` and `trace`;
+pinned runs are protected from retention.
 
 Trace JSON resolves the retained trace without opening a viewer and returns the
 failing action, nearby actions and locators, bounded DOM snapshot excerpts,
