@@ -27,8 +27,9 @@ Options:
   --json              Print structured output
   --help              Print this help
 
-Pinned runs, active runs, session data, and unrecognized directories are never
-removed. Pruned runs keep compact inventory summaries under .heimdal/.history.
+Pinned runs, active runs, session evidence, and unrecognized directories are
+never removed. GC finalizes stale session state and removes dead global indexes.
+Pruned runs keep compact inventory summaries under .heimdal/.history.
 Automatic retention uses artifacts.retention from .heimdal.json and runs at
 most once per day.
 `
@@ -56,17 +57,20 @@ type GCItem struct {
 }
 
 type GCResult struct {
-	SchemaVersion    int      `json:"schema_version"`
-	Status           string   `json:"status"`
-	ArtifactRoot     string   `json:"artifact_root"`
-	DryRun           bool     `json:"dry_run"`
-	Scanned          int      `json:"scanned"`
-	Candidates       int      `json:"candidates"`
-	Removed          int      `json:"removed"`
-	Archived         int      `json:"archived"`
-	ReclaimableBytes int64    `json:"reclaimable_bytes"`
-	Items            []GCItem `json:"items,omitempty"`
-	Omitted          int      `json:"omitted,omitempty"`
+	SchemaVersion        int      `json:"schema_version"`
+	Status               string   `json:"status"`
+	ArtifactRoot         string   `json:"artifact_root"`
+	DryRun               bool     `json:"dry_run"`
+	Scanned              int      `json:"scanned"`
+	Candidates           int      `json:"candidates"`
+	Removed              int      `json:"removed"`
+	Archived             int      `json:"archived"`
+	ReclaimableBytes     int64    `json:"reclaimable_bytes"`
+	Items                []GCItem `json:"items,omitempty"`
+	Omitted              int      `json:"omitted,omitempty"`
+	StaleSessions        int      `json:"stale_sessions,omitempty"`
+	SessionIndexesPruned int      `json:"session_indexes_pruned,omitempty"`
+	SessionEvidenceBytes int64    `json:"session_evidence_bytes,omitempty"`
 }
 
 type artifactRun struct {
@@ -113,6 +117,16 @@ func runGC(args []string, out, errOut io.Writer) int {
 	if err != nil {
 		return reportError(options.JSON, err, out, errOut)
 	}
+	sessions, err := inspectSessionInventory(project.Root, "")
+	if err != nil {
+		return reportError(options.JSON, fmt.Errorf("inspect session lifecycle: %w", err), out, errOut)
+	}
+	if err := pruneSessionInventory(&sessions, options.DryRun, time.Now().UTC()); err != nil {
+		return reportError(options.JSON, fmt.Errorf("prune stale session indexes: %w", err), out, errOut)
+	}
+	result.StaleSessions = sessions.Candidates
+	result.SessionIndexesPruned = sessions.Pruned
+	result.SessionEvidenceBytes = sessions.CandidateBytes
 	if options.JSON {
 		if err := writeJSONTo(out, result); err != nil {
 			return reportError(true, err, out, errOut)
@@ -124,6 +138,9 @@ func runGC(args []string, out, errOut io.Writer) int {
 		action = "would remove"
 	}
 	fmt.Fprintf(out, "Heimdal gc: %s %d runs (%d bytes) from %s\n", action, result.Candidates, result.ReclaimableBytes, result.ArtifactRoot)
+	if result.StaleSessions > 0 {
+		fmt.Fprintf(out, "  stale sessions: %d indexes, %d evidence bytes preserved\n", result.StaleSessions, result.SessionEvidenceBytes)
+	}
 	for _, item := range result.Items {
 		fmt.Fprintf(out, "  %s: %s, %d bytes, %s\n", item.RunID, item.Status, item.SizeBytes, item.Reason)
 	}

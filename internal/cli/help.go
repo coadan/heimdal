@@ -186,6 +186,8 @@ func helpForCommand(command string) (string, bool) {
 		return skillUsage, true
 	case "session":
 		return sessionUsage, true
+	case "sessions":
+		return sessionsUsage, true
 	default:
 		return "", false
 	}

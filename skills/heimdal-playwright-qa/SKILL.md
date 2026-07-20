@@ -50,6 +50,19 @@ Run from the target worktree. Add `--dir PATH` from elsewhere. Use `--name`
 only for concurrent sessions or cross-directory lookup. Sessions are headless
 by default; add `--headed` when a person needs to inspect the browser.
 
+Discover lifecycle state before guessing at session names or inspecting files:
+
+```bash
+heimdal sessions list --json
+heimdal sessions list --status stale --json
+heimdal sessions prune --dry-run --json
+```
+
+The inventory probes the owning Playwright workspace. Treat `stale` as a dead
+browser or owned app, `unknown` as an unavailable runtime probe, and `broken` as
+an invalid global index. Pruning removes stale indexes but preserves evidence;
+`gc` integrates the same cleanup.
+
 If `doctor` reports a missing component, install only that component:
 
 ```bash

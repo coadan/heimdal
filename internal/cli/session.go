@@ -175,6 +175,8 @@ func runSession(ctx context.Context, args []string, out, errOut io.Writer) int {
 	}
 
 	switch args[0] {
+	case "list", "prune":
+		return runSessions(args, out, errOut)
 	case "group":
 		return runSessionGroup(ctx, args[1:], out, errOut)
 	case "start":
@@ -218,6 +220,8 @@ Usage:
   heimdal session group stop [--name GROUP] [options]
   heimdal session group timeline [--name GROUP] [options]
   heimdal session group report [--name GROUP] [options]
+  heimdal session list [options]
+  heimdal session prune [options]
   heimdal session start [options]
   heimdal session stop [options]
   heimdal session status [options]
@@ -354,10 +358,16 @@ func startSession(ctx context.Context, project Project, options SessionOptions, 
 	baseDir := filepath.Join(artifactRoot(project, options.Artifacts), "sessions", name)
 	statePath := filepath.Join(baseDir, "session.json")
 	if existing, err := readSessionState(statePath); err == nil && existing.StoppedAt == nil {
-		if !options.Force {
+		runtime := inspectBrowserInventory(existing, sessionAgentRunner(existing))
+		status, _ := classifySessionRuntime(existing, runtime)
+		if status == "stale" {
+			stopSessionResources(ctx, project, existing)
+			markSessionStopped(statePath, &existing)
+		} else if !options.Force {
 			return reportError(options.JSON, fmt.Errorf("session %q is already active (use --force or `heimdal session status --name %s`)", name, name), out, errOut)
+		} else {
+			stopSessionResources(ctx, project, existing)
 		}
-		stopSessionResources(ctx, project, existing)
 	}
 
 	started := time.Now().UTC()
@@ -551,14 +561,15 @@ func runSessionStatus(args []string, out, errOut io.Writer) int {
 		return reportError(options.JSON, err, out, errOut)
 	}
 	response := sessionResponse(state, sessionCommandResult{}, nil)
-	if state.StoppedAt == nil {
-		if response.Server == "stopped" {
-			response.Status = "issues"
-		} else {
-			response.Status = "active"
-		}
-	} else {
-		response.Status = "stopped"
+	runtime := browserInventory{}
+	if state.StoppedAt == nil && !(state.ServerPID > 0 && response.Server == "stopped") {
+		runtime = inspectBrowserInventory(state, sessionAgentRunner(state))
+	}
+	status, reason := classifySessionRuntime(state, runtime)
+	response.Status = status
+	if response.Status == "stale" || response.Status == "unknown" {
+		response.Error = reason
+		response.Issues = append(response.Issues, reason)
 	}
 	response.State = &state
 	return printSessionResponse(out, errOut, response, options.JSON)

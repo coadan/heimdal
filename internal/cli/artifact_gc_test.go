@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,6 +16,70 @@ func TestDefaultArtifactsUseDedicatedRootAndRetention(t *testing.T) {
 	}
 	if !config.Artifacts.Retention.Enabled || config.Artifacts.Retention.MaxAgeDays != 14 || config.Artifacts.Retention.KeepFailures != 20 || config.Artifacts.Retention.MaxBytes != 5*1024*1024*1024 {
 		t.Fatalf("default retention = %#v", config.Artifacts.Retention)
+	}
+}
+
+func TestGCReportsAndPrunesStaleSessionIndexesWithoutRemovingEvidence(t *testing.T) {
+	t.Setenv("HEIMDAL_STATE_DIR", t.TempDir())
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runner := filepath.Join(root, "fake-playwright-cli")
+	if err := os.WriteFile(runner, []byte("#!/bin/sh\nprintf '%s\\n' '{\"browsers\":[]}'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	state := SessionState{Name: "stale", RunID: "stale-run", Root: root, StartedAt: time.Now().UTC().Add(-time.Hour)}
+	state.SessionDir = filepath.Join(root, defaultArtifactDir, "sessions", state.Name, state.RunID)
+	state.ActionLog = filepath.Join(state.SessionDir, "actions.jsonl")
+	state.ProjectCache = &SessionProjectCache{AgentRunner: []string{runner}}
+	if err := os.MkdirAll(state.SessionDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	evidence := filepath.Join(state.SessionDir, "evidence.txt")
+	if err := os.WriteFile(evidence, []byte("retained"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	statePath := filepath.Join(filepath.Dir(state.SessionDir), "session.json")
+	if err := writeSessionState(statePath, state); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeSessionIndex(state); err != nil {
+		t.Fatal(err)
+	}
+	indexPath, _ := sessionIndexPath(state)
+
+	var out, errOut strings.Builder
+	if code := runGC([]string{"--dir", root, "--dry-run", "--json"}, &out, &errOut); code != 0 {
+		t.Fatalf("gc dry-run exit = %d: %s", code, errOut.String())
+	}
+	var dry GCResult
+	if err := json.Unmarshal([]byte(out.String()), &dry); err != nil {
+		t.Fatal(err)
+	}
+	if dry.StaleSessions != 1 || dry.SessionIndexesPruned != 0 || dry.SessionEvidenceBytes == 0 {
+		t.Fatalf("gc dry-run = %#v", dry)
+	}
+	out.Reset()
+	if code := runGC([]string{"--dir", root, "--json"}, &out, &errOut); code != 0 {
+		t.Fatalf("gc exit = %d: %s", code, errOut.String())
+	}
+	var applied GCResult
+	if err := json.Unmarshal([]byte(out.String()), &applied); err != nil {
+		t.Fatal(err)
+	}
+	if applied.StaleSessions != 1 || applied.SessionIndexesPruned != 1 {
+		t.Fatalf("gc applied = %#v", applied)
+	}
+	if _, err := os.Stat(indexPath); !os.IsNotExist(err) {
+		t.Fatalf("stale index remains: %v", err)
+	}
+	if _, err := os.Stat(evidence); err != nil {
+		t.Fatalf("gc removed session evidence: %v", err)
+	}
+	finalized, err := readSessionState(statePath)
+	if err != nil || finalized.StoppedAt == nil {
+		t.Fatalf("gc did not finalize state: %#v, %v", finalized, err)
 	}
 }
 

@@ -156,6 +156,21 @@ signatures and returns a delta when the semantic page state is unchanged. On a
 final inspection, add `--stop` to collect the packet and close a non-group
 browser and its owned app in one command.
 
+Discover sessions without guessing names or reading state files:
+
+```bash
+heimdal sessions list --json
+heimdal sessions list --status stale --json
+heimdal sessions prune --dry-run --json
+```
+
+The inventory probes each indexed worktree's Playwright workspace and reports
+`active`, `stopped`, `stale`, `unknown`, or `broken`. Pruning finalizes stale
+state and removes dead global indexes while preserving session evidence;
+`heimdal gc` performs the same stale-index cleanup. `session list` and `session
+prune` are accepted as singular aliases. Starting a known-stale session name
+recovers it without requiring `--force`.
+
 Wait for user-visible state instead of polling snapshots or sleeping:
 
 ```bash

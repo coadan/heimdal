@@ -31,6 +31,8 @@ Usage:
   heimdal session batch --file FILE|- [options]
   heimdal session save [options]
   heimdal session <PLAYWRIGHT_CLI_COMMAND> [options]
+  heimdal sessions list [--dir PATH] [--status STATUS] [--json]
+  heimdal sessions prune [--dir PATH] [--dry-run] [--json]
   heimdal report [--dir PATH] [--run ID] [--json]
   heimdal runs list [--dir PATH] [--status STATUS] [--json]
   heimdal runs show SELECTOR [--dir PATH] [--json]
@@ -102,6 +104,8 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return runTests(ctx, args[1:], out, errOut, true)
 	case "session":
 		return runSession(ctx, args[1:], out, errOut)
+	case "sessions":
+		return runSessions(args[1:], out, errOut)
 	case "report":
 		return runReport(args[1:], out, errOut)
 	case "runs":
@@ -185,6 +189,18 @@ func runDoctor(args []string, out, errOut io.Writer) int {
 			report.Warnings = append(report.Warnings, fmt.Sprintf("artifact usage exceeds the configured %d-byte budget; run `heimdal gc --dry-run`", report.ArtifactBudgetBytes))
 		}
 	}
+	if sessions, sessionErr := inspectSessionInventory(project.Root, ""); sessionErr == nil {
+		report.ActiveSessions = sessions.Active
+		report.StaleSessions = sessions.Stale
+		report.BrokenSessionIndexes = sessions.Broken
+		report.SessionEvidenceBytes = sessions.EvidenceBytes
+		if sessions.Stale > 0 || sessions.Broken > 0 {
+			if report.Status == "ok" {
+				report.Status = "issues"
+			}
+			report.Warnings = append(report.Warnings, fmt.Sprintf("%d stale sessions and %d broken session indexes; inspect with `heimdal sessions list --dir %s --json`", sessions.Stale, sessions.Broken, project.Root))
+		}
+	}
 	version, versionErr := runCapture(project.Root, append(project.Runner, "--version"), baseEnvironment())
 	if versionErr != nil {
 		report.Warnings = append(report.Warnings, "repository Playwright is not runnable; deterministic run and list commands require a project Playwright install")
@@ -259,27 +275,31 @@ func runProjectPreflight(project Project) []DoctorCheckResult {
 }
 
 type DoctorReport struct {
-	SchemaVersion       int                 `json:"schema_version"`
-	Status              string              `json:"status"`
-	Root                string              `json:"root"`
-	Branch              string              `json:"branch,omitempty"`
-	ConfigFile          string              `json:"config_file,omitempty"`
-	PlaywrightConfig    string              `json:"playwright_config,omitempty"`
-	PackageManager      string              `json:"package_manager,omitempty"`
-	Runner              []string            `json:"runner,omitempty"`
-	AgentRunner         []string            `json:"agent_runner,omitempty"`
-	PlaywrightReady     bool                `json:"playwright_ready"`
-	SessionReady        bool                `json:"session_ready"`
-	PlaywrightVersion   string              `json:"playwright_version,omitempty"`
-	AgentVersion        string              `json:"agent_cli_version,omitempty"`
-	ArtifactRoot        string              `json:"artifact_root,omitempty"`
-	ArtifactBytes       int64               `json:"artifact_bytes,omitempty"`
-	ArtifactBudgetBytes int64               `json:"artifact_budget_bytes,omitempty"`
-	ReclaimableBytes    int64               `json:"reclaimable_bytes,omitempty"`
-	InterruptedRuns     int                 `json:"interrupted_runs,omitempty"`
-	Warnings            []string            `json:"warnings,omitempty"`
-	Preflight           []DoctorCheckResult `json:"preflight,omitempty"`
-	Error               string              `json:"error,omitempty"`
+	SchemaVersion        int                 `json:"schema_version"`
+	Status               string              `json:"status"`
+	Root                 string              `json:"root"`
+	Branch               string              `json:"branch,omitempty"`
+	ConfigFile           string              `json:"config_file,omitempty"`
+	PlaywrightConfig     string              `json:"playwright_config,omitempty"`
+	PackageManager       string              `json:"package_manager,omitempty"`
+	Runner               []string            `json:"runner,omitempty"`
+	AgentRunner          []string            `json:"agent_runner,omitempty"`
+	PlaywrightReady      bool                `json:"playwright_ready"`
+	SessionReady         bool                `json:"session_ready"`
+	PlaywrightVersion    string              `json:"playwright_version,omitempty"`
+	AgentVersion         string              `json:"agent_cli_version,omitempty"`
+	ArtifactRoot         string              `json:"artifact_root,omitempty"`
+	ArtifactBytes        int64               `json:"artifact_bytes,omitempty"`
+	ArtifactBudgetBytes  int64               `json:"artifact_budget_bytes,omitempty"`
+	ReclaimableBytes     int64               `json:"reclaimable_bytes,omitempty"`
+	InterruptedRuns      int                 `json:"interrupted_runs,omitempty"`
+	ActiveSessions       int                 `json:"active_sessions,omitempty"`
+	StaleSessions        int                 `json:"stale_sessions,omitempty"`
+	BrokenSessionIndexes int                 `json:"broken_session_indexes,omitempty"`
+	SessionEvidenceBytes int64               `json:"session_evidence_bytes,omitempty"`
+	Warnings             []string            `json:"warnings,omitempty"`
+	Preflight            []DoctorCheckResult `json:"preflight,omitempty"`
+	Error                string              `json:"error,omitempty"`
 }
 
 func printDoctor(report DoctorReport, asJSON bool, out, errOut io.Writer, exitCode int) int {
@@ -320,6 +340,9 @@ func printDoctor(report DoctorReport, asJSON bool, out, errOut io.Writer, exitCo
 	fmt.Fprintf(out, "  artifacts: %s\n", report.ArtifactRoot)
 	if report.ArtifactBytes > 0 {
 		fmt.Fprintf(out, "  artifact bytes: %d (%d reclaimable; %d interrupted runs)\n", report.ArtifactBytes, report.ReclaimableBytes, report.InterruptedRuns)
+	}
+	if report.ActiveSessions > 0 || report.StaleSessions > 0 || report.BrokenSessionIndexes > 0 {
+		fmt.Fprintf(out, "  sessions: %d active, %d stale, %d broken indexes (%d evidence bytes)\n", report.ActiveSessions, report.StaleSessions, report.BrokenSessionIndexes, report.SessionEvidenceBytes)
 	}
 	for _, check := range report.Preflight {
 		fmt.Fprintf(out, "  preflight %s: %s (%dms)\n", check.Name, check.Status, check.DurationMS)

@@ -3,6 +3,22 @@ package cli
 import "strings"
 
 var nestedCommandUsage = map[string]string{
+	"sessions list": `Discover persistent Heimdal sessions across worktrees
+
+Usage:
+  heimdal sessions list [--dir PATH] [--status active|stopped|stale|unknown|broken] [--limit N] [--json]
+
+Each worktree's Playwright workspace is probed so dead browsers and owned app
+processes are reported as stale instead of active.
+`,
+	"sessions prune": `Finalize stale session state without discarding evidence
+
+Usage:
+  heimdal sessions prune [--dir PATH] [--dry-run] [--limit N] [--json]
+
+Prune marks stale sessions stopped and removes stale or broken global indexes.
+Retained action, screenshot, and diagnostic evidence is preserved.
+`,
 	"runs list": `List indexed Heimdal runs without scanning artifact trees
 
 Usage:

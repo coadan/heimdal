@@ -8,7 +8,7 @@ import (
 )
 
 func TestEveryTopLevelCommandHasSpecificSuccessfulHelp(t *testing.T) {
-	commands := []string{"doctor", "init", "run", "list", "report", "runs", "trace", "gc", "metadata", "signal", "install", "skill", "session"}
+	commands := []string{"doctor", "init", "run", "list", "report", "runs", "trace", "gc", "metadata", "signal", "install", "skill", "session", "sessions"}
 	for _, command := range commands {
 		t.Run(command, func(t *testing.T) {
 			var out strings.Builder
@@ -29,7 +29,7 @@ func TestPlaywrightHelpAfterDelimiterIsNotConsumed(t *testing.T) {
 }
 
 func TestCanonicalSessionCommandsHaveSpecificHelp(t *testing.T) {
-	commands := []string{"start", "stop", "status", "observe", "screenshot", "diagnose", "wait", "expect", "timeline", "report", "checkpoint", "measure", "batch", "save", "group", "click", "fill", "press", "type", "mouse", "pointer"}
+	commands := []string{"start", "stop", "status", "list", "prune", "observe", "screenshot", "diagnose", "wait", "expect", "timeline", "report", "checkpoint", "measure", "batch", "save", "group", "click", "fill", "press", "type", "mouse", "pointer"}
 	for _, command := range commands {
 		t.Run(command, func(t *testing.T) {
 			usage, ok := commandHelp([]string{"session", command, "--help"})
@@ -45,7 +45,7 @@ func TestCanonicalSessionCommandsHaveSpecificHelp(t *testing.T) {
 }
 
 func TestNestedCommandsHaveSpecificHelp(t *testing.T) {
-	commands := [][2]string{{"runs", "list"}, {"runs", "show"}, {"runs", "compare"}, {"runs", "pin"}, {"metadata", "publish"}, {"metadata", "get"}, {"signal", "send"}, {"signal", "wait"}, {"skill", "path"}, {"skill", "install"}, {"trace", "inspect"}}
+	commands := [][2]string{{"runs", "list"}, {"runs", "show"}, {"runs", "compare"}, {"runs", "pin"}, {"sessions", "list"}, {"sessions", "prune"}, {"metadata", "publish"}, {"metadata", "get"}, {"signal", "send"}, {"signal", "wait"}, {"skill", "path"}, {"skill", "install"}, {"trace", "inspect"}}
 	for _, command := range commands {
 		name := command[0] + " " + command[1]
 		t.Run(name, func(t *testing.T) {

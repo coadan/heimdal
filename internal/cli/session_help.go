@@ -3,6 +3,20 @@ package cli
 import "fmt"
 
 var sessionCommandUsage = map[string]string{
+	"list": `Discover persistent Heimdal sessions across worktrees
+
+Usage:
+  heimdal session list [--dir PATH] [--status active|stopped|stale|unknown|broken] [--limit N] [--json]
+
+This is an alias for heimdal sessions list.
+`,
+	"prune": `Finalize stale session state without discarding evidence
+
+Usage:
+  heimdal session prune [--dir PATH] [--dry-run] [--limit N] [--json]
+
+This is an alias for heimdal sessions prune.
+`,
 	"start": `Start a persistent Playwright browser session and optional project app
 
 Usage:
