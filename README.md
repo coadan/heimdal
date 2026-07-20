@@ -244,10 +244,10 @@ heimdal session measure e12 --json
 ```
 
 The page packet reports viewport and document geometry, overflow and clipping,
-touch-target warnings, bounded controls and early content, plus semantic and
-grid/flex regions with tracks or direction, padding, gap, and overflow. One
-packet per viewport is usually enough for a layout decision. Targeted
-measurement adds one element's rectangle and key computed styles. It is
+touch-target warnings, bounded controls and early leaf content, plus semantic,
+grid/flex, and padded/scroll regions with tracks or direction, padding, gap,
+and overflow. One packet per viewport is usually enough for a layout decision.
+Targeted measurement adds one element's rectangle and key computed styles. It is
 read-only and runs through Playwright's evaluation command.
 
 For canvas or spatial controls, keep coordinates relative to a measured

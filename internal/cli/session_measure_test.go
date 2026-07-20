@@ -22,7 +22,7 @@ func TestParseLayoutMeasurementSupportsRawAndWrappedJSON(t *testing.T) {
 }
 
 func TestLayoutMeasurementScriptIsBoundedAndReadOnly(t *testing.T) {
-	for _, required := range []string{"slice(0, 8)", "slice(0, 12)", "slice(0, 16)", "horizontal_overflow", "small_controls", "grid_columns", "flex_direction", "controls", "content", "getComputedStyle(target)"} {
+	for _, required := range []string{"slice(0, 8)", "slice(0, 12)", "slice(0, 16)", "horizontal_overflow", "small_controls", "grid_columns", "flex_direction", "structural", "children.length === 0", "controls", "content", "getComputedStyle(target)"} {
 		if !strings.Contains(layoutMeasurementScript, required) {
 			t.Fatalf("measurement script omitted %q", required)
 		}

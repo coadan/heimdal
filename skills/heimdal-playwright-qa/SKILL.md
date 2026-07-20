@@ -97,9 +97,9 @@ heimdal session screenshot -- --full-page
 For design decisions, use `session measure --json` before writing ad hoc eval
 scripts or repeatedly comparing screenshots. The bounded packet reports
 viewport/document geometry, overflow, clipping, touch-target warnings, controls
-and early content, plus semantic and grid/flex regions with tracks or direction,
-padding, gap, and overflow. One packet per viewport should usually support the
-layout decision. Use `session measure TARGET --json` only when a remaining
+and early leaf content, plus semantic, grid/flex, and padded/scroll regions with
+tracks or direction, padding, gap, and overflow. One packet per viewport should
+usually support the layout decision. Use `session measure TARGET --json` only when a remaining
 decision needs that target's rectangle and key computed styles; then request a
 screenshot only for visual qualities the measurement cannot represent.
 

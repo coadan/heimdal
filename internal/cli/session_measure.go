@@ -179,13 +179,18 @@ const layoutMeasurementScript = `target => {
   const regionSelector = 'main,nav,header,footer,aside,section,article,form,[role=main],[role=navigation],[role=banner],[role=contentinfo],[role=complementary],[role=region]';
   const regionCandidates = visible.filter(element => {
     const style = getComputedStyle(element);
-    return element.matches(regionSelector) || ((style.display === 'grid' || style.display === 'flex') && element.children.length > 1);
+    const layout = style.display === 'grid' || style.display === 'flex';
+    const padded = [style.paddingTop, style.paddingRight, style.paddingBottom, style.paddingLeft].some(value => parseFloat(value) > 0);
+    const scrolling = ['auto', 'scroll'].includes(style.overflowX) || ['auto', 'scroll'].includes(style.overflowY);
+    const structural = element.classList.length > 0 && (padded || scrolling) && element.getBoundingClientRect().width * element.getBoundingClientRect().height > 1000;
+    return element.matches(regionSelector) || (layout && element.children.length > 1) || structural;
   }).map(element => {
     const style = getComputedStyle(element);
     const rect = element.getBoundingClientRect();
-    const semantic = element.matches(regionSelector) ? 2 : 0;
-    const layout = style.display === 'grid' || style.display === 'flex' ? 1 : 0;
-    return { element, style, score: semantic + layout, area: rect.width * rect.height };
+    const semantic = element.matches(regionSelector) ? 4 : 0;
+    const layout = style.display === 'grid' || style.display === 'flex' ? 2 : 0;
+    const structural = element.classList.length > 0 ? 1 : 0;
+    return { element, style, score: semantic + layout + structural, area: rect.width * rect.height };
   }).sort((a, b) => b.score - a.score || b.area - a.area).slice(0, 16);
   const regions = regionCandidates.map(({ element, style }) => ({
     ...sample(element), selector: selector(element), display: style.display,
@@ -195,7 +200,12 @@ const layoutMeasurementScript = `target => {
     child_count: element.children.length
   }));
   const controls = interactive.slice(0, 12).map(element => sample(element));
-  const content = visible.filter(element => element.matches('h1,h2,h3,h4,h5,h6,p,li,dt,dd,blockquote,figcaption,[role=heading]') && (element.innerText || '').trim())
+  const content = visible.filter(element => {
+    const text = (element.innerText || '').trim();
+    const semanticText = element.matches('h1,h2,h3,h4,h5,h6,p,li,dt,dd,blockquote,figcaption,[role=heading],[role=status],[role=alert]');
+    const leafText = element.children.length === 0 && !element.matches(interactiveSelector) && text.length > 0 && text.length <= 240;
+    return text && (semanticText || leafText);
+  })
     .sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top || a.getBoundingClientRect().left - b.getBoundingClientRect().left)
     .slice(0, 12).map(element => sample(element));
   const overflowing = visible.filter(element => {
