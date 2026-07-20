@@ -79,10 +79,14 @@ Usage:
 Checkpoints label recoverable session state; they do not resume arbitrary test
 fixtures from a step.
 `,
-	"measure": `Return bounded viewport, document, control, and target layout evidence
+	"measure": `Return bounded decision-ready layout evidence
 
 Usage:
   heimdal session measure [TARGET] [--session NAME] [--json]
+
+Without TARGET, the packet includes viewport/document geometry, overflow,
+controls, early content, and semantic or grid/flex regions. With TARGET, it
+also includes that element's rectangle and key computed styles.
 `,
 	"batch": `Execute a bounded JSON sequence in one agent round trip
 

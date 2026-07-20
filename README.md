@@ -208,9 +208,11 @@ heimdal session measure --json
 heimdal session measure e12 --json
 ```
 
-The page packet reports viewport and document geometry, content and control
-counts, horizontal overflow, clipped-content samples, and controls below 44 px.
-Targeted measurement adds the element rectangle and key computed styles. It is
+The page packet reports viewport and document geometry, overflow and clipping,
+touch-target warnings, bounded controls and early content, plus semantic and
+grid/flex regions with tracks or direction, padding, gap, and overflow. One
+packet per viewport is usually enough for a layout decision. Targeted
+measurement adds one element's rectangle and key computed styles. It is
 read-only and runs through Playwright's evaluation command.
 
 For canvas or spatial controls, keep coordinates relative to a measured
