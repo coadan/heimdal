@@ -33,6 +33,7 @@ heimdal doctor
 heimdal session start
 heimdal session click e12
 heimdal session fill e5 "hello"
+heimdal session wait --role button --name "Continue" --state enabled --timeout 30s
 heimdal session diagnose --json
 heimdal session stop
 ```
@@ -70,6 +71,22 @@ needed fact. Forward uncommon Playwright CLI options after `--`:
 heimdal session observe -- --depth=4
 heimdal session screenshot -- --full-page
 ```
+
+For asynchronous UI, issue one semantic wait instead of repeatedly observing
+or sleeping. A role is the page's accessibility role (`button`, `link`,
+`textbox`, or similar). Wait by role and accessible name, visible text, or any
+semantic change; each successful wait returns the resulting delta:
+
+```bash
+heimdal session wait --role button --name "Continue" --state enabled --timeout 30s
+heimdal session wait --text "The world answers"
+heimdal session wait --change
+```
+
+On `wait`, `--name` is the accessible name; use `--session NAME` to select a
+named browser. Canonical targeted forms include `press TARGET KEY`, `type TARGET
+TEXT`, `fill TARGET TEXT --submit`, `click TARGET --force`, and `mouse click X
+Y`. Follow Heimdal's structured correction when a command shape is invalid.
 
 Put known consecutive actions in one bounded batch to reduce agent round trips:
 

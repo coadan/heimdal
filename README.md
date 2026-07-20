@@ -133,6 +133,25 @@ heimdal session save --name qa --test tests/browser/exploration.spec.ts
 heimdal session stop --name qa
 ```
 
+Wait for user-visible state instead of polling snapshots or sleeping:
+
+```bash
+heimdal session wait --role button --name "Continue" --state enabled --timeout 30s
+heimdal session wait --text "The world answers"
+heimdal session wait --change
+```
+
+`--role` is the accessibility role exposed by the page, such as `button`,
+`link`, `textbox`, or `dialog`. Waits run through Playwright locators and return
+the resulting semantic delta.
+For a named browser session, pass `--session NAME` because `wait --name` means
+the accessible name paired with `--role`.
+
+Heimdal also keeps common interaction shapes stable across Playwright CLI
+versions: targeted `press` and `type`, `fill --submit`, `click --force`, and
+`mouse click X Y` are canonical forms. Invalid shapes return a bounded
+correction instead of embedding the upstream help page.
+
 Sessions are headless by default, which suits unattended agents. Add
 `--headed` to `session start` when you want a visible, inspectable browser:
 

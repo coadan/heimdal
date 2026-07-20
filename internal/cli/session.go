@@ -113,6 +113,7 @@ type SessionResponse struct {
 	SnapshotOmitted int               `json:"snapshot_omitted,omitempty"`
 	Stderr          string            `json:"stderr,omitempty"`
 	Error           string            `json:"error,omitempty"`
+	Correction      string            `json:"correction,omitempty"`
 	Issues          []string          `json:"issues,omitempty"`
 	Server          string            `json:"server,omitempty"`
 	Artifacts       map[string]string `json:"artifacts,omitempty"`
@@ -171,6 +172,8 @@ func runSession(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return runSessionAction(ctx, "screenshot", args[1:], out, errOut)
 	case "diagnose":
 		return runSessionDiagnose(ctx, args[1:], out, errOut)
+	case "wait":
+		return runSessionWait(ctx, args[1:], out, errOut)
 	case "batch":
 		return runSessionBatch(ctx, args[1:], out, errOut)
 	case "save":
@@ -189,6 +192,7 @@ Usage:
   heimdal session observe [options] [-- PLAYWRIGHT_CLI_ARGS...]
   heimdal session screenshot [options] [-- PLAYWRIGHT_CLI_ARGS...]
   heimdal session diagnose [options]
+  heimdal session wait (--role ROLE [--name NAME] | --text TEXT | --change) [options]
   heimdal session batch --file FILE|- [options]
   heimdal session save [options]
   heimdal session <PLAYWRIGHT_CLI_COMMAND> [options]
@@ -213,11 +217,27 @@ Start options:
   --json           Print only agent-readable JSON
   --json=full      Include repeated session metadata in JSON actions
 
+Wait options:
+  --role ROLE      Wait for an accessible role, optionally narrowed by --name
+  --name NAME      Accessible name for --role (use --session for session lookup)
+  --text TEXT      Wait for matching visible text
+  --state STATE    attached, detached, visible, hidden, enabled, or disabled
+  --change         Wait for the page's semantic accessibility state to change
+  --timeout AGE    Maximum wait such as 30s (default: 30s)
+
+Stable action forms:
+  press KEY | press TARGET KEY
+  type TEXT | type TARGET TEXT
+  fill TARGET TEXT [--submit]
+  click TARGET [left|right|middle|--force]
+  mouse click X Y
+
 Examples:
   heimdal session start --name qa --headed
   heimdal session observe
   heimdal session click e12
   heimdal session fill e5 "hello"
+  heimdal session wait --role button --name "Continue" --state enabled --timeout 30s
   heimdal session batch --file ./browser-steps.json
   heimdal session diagnose --json
   heimdal session save --test tests/browser/exploration.spec.ts
@@ -469,17 +489,47 @@ func runSessionAction(ctx context.Context, action string, args []string, out, er
 	if state.StoppedAt != nil {
 		return reportError(options.JSON, fmt.Errorf("session %q is stopped", state.Name), out, errOut)
 	}
+	if action == "click" && options.Force {
+		options.Forwarded = append(options.Forwarded, "--force")
+		options.Force = false
+	}
 	response := executeSessionAction(ctx, project, &state, statePath, action, options)
 	return printSessionResponse(out, errOut, response, options.JSON)
 }
 
 func executeSessionAction(ctx context.Context, project Project, state *SessionState, statePath, action string, options SessionOptions) SessionResponse {
+	if action == "wait" {
+		waitOptions, err := parseSessionWaitOptions(options.Forwarded)
+		if err != nil {
+			return failedSessionGrammarResponse(*state, []string{"wait"}, err, sessionActionCorrection("wait"), options.FullJSON)
+		}
+		waitOptions.Boxes, waitOptions.Full = options.Boxes, options.Full
+		waitOptions.Verbose, waitOptions.FullJSON = options.Verbose, options.FullJSON
+		return executeSessionWaitAction(ctx, project, state, statePath, waitOptions)
+	}
 	logicalArgs := append([]string{action}, options.Forwarded...)
 	if action == "snapshot" {
 		logicalArgs = sessionSnapshotArgs(options.Boxes, options.Verbose, options.Forwarded)
 	}
-	captureLocator := isLocatorAction(action, logicalArgs)
-	result, commandErr := runSessionCommandMode(ctx, project, state, statePath, logicalArgs, "", !options.Verbose && !captureLocator)
+	runtimeArgs, locator, correction, err := planStableSessionAction(ctx, project, state, statePath, action, logicalArgs)
+	if err != nil {
+		return failedSessionGrammarResponse(*state, logicalArgs, err, correction, options.FullJSON)
+	}
+	return executeSessionActionPlan(ctx, project, state, statePath, action, options, logicalArgs, runtimeArgs, locator)
+}
+
+func failedSessionGrammarResponse(state SessionState, logicalArgs []string, err error, correction string, fullJSON bool) SessionResponse {
+	response := sessionResponse(state, sessionCommandResult{Args: logicalArgs}, nil)
+	response.Status = "failed"
+	response.Error = err.Error()
+	response.Correction = correction
+	response.CompactJSON = !fullJSON
+	return response
+}
+
+func executeSessionActionPlan(ctx context.Context, project Project, state *SessionState, statePath, action string, options SessionOptions, logicalArgs, runtimeArgs []string, locator string) SessionResponse {
+	captureLocator := locator == "" && isLocatorAction(action, logicalArgs)
+	result, commandErr := runSessionCommandModeArgs(ctx, project, state, statePath, logicalArgs, runtimeArgs, locator, !options.Verbose && !captureLocator)
 	output := result.Stdout
 	stderr := result.Stderr
 	var snapshot string
@@ -541,6 +591,16 @@ func executeSessionAction(ctx context.Context, project Project, state *SessionSt
 	if commandErr != nil {
 		response.Status = "failed"
 		response.Error = commandErr.Error()
+		grammarOutput := joinOutputs(output, stderr)
+		if detail := compactCLIOutput(grammarOutput); detail != "" {
+			response.Error = truncateDisplay(detail, 800)
+		}
+		if strings.Contains(grammarOutput, "Usage: playwright-cli") || strings.Contains(grammarOutput, "Unknown command") {
+			response.Output = commandString(compactSessionArgs(result.Args))
+			response.Error = compactSessionGrammarOutput(grammarOutput)
+			response.Stderr = ""
+			response.Correction = sessionActionCorrection(action)
+		}
 	} else if response.Status != "issues" {
 		response.Status = "passed"
 	}
@@ -989,8 +1049,12 @@ func runSessionCommand(ctx context.Context, project Project, state *SessionState
 }
 
 func runSessionCommandMode(ctx context.Context, project Project, state *SessionState, statePath string, logicalArgs []string, locator string, raw bool) (sessionCommandResult, error) {
+	return runSessionCommandModeArgs(ctx, project, state, statePath, logicalArgs, logicalArgs, locator, raw)
+}
+
+func runSessionCommandModeArgs(ctx context.Context, project Project, state *SessionState, statePath string, logicalArgs, runtimeArgs []string, locator string, raw bool) (sessionCommandResult, error) {
 	started := time.Now().UTC()
-	command := agentSessionCommand(project, *state, logicalArgs, raw)
+	command := agentSessionCommand(project, *state, runtimeArgs, raw)
 	var stdout, stderr bytes.Buffer
 	cmd := exec.CommandContext(ctx, command[0], command[1:]...)
 	cmd.Dir = project.Root
@@ -1040,7 +1104,11 @@ func runSessionCommandMode(ctx context.Context, project Project, state *SessionS
 	}
 	if err != nil && !strings.Contains(err.Error(), "playwright-cli") && len(command) > 0 {
 		if exitCode != 0 {
-			err = fmt.Errorf("Playwright CLI command failed (%s): %w", commandString(command), err)
+			name := "session action"
+			if len(logicalArgs) > 0 {
+				name = logicalArgs[0]
+			}
+			err = fmt.Errorf("Playwright CLI %s failed with exit %d", name, exitCode)
 		}
 	}
 	if exitCode != 0 && err == nil {
@@ -1483,6 +1551,9 @@ func printSessionResponse(out, errOut io.Writer, response SessionResponse, asJSO
 	}
 	if response.Error != "" {
 		fmt.Fprintf(errOut, "heimdal: %s\n", response.Error)
+		if response.Correction != "" {
+			fmt.Fprintf(errOut, "heimdal: correction: %s\n", response.Correction)
+		}
 		return 1
 	}
 	if response.Status == "issues" {
@@ -1504,6 +1575,7 @@ func compactSessionResponse(response SessionResponse) SessionResponse {
 		SnapshotOmitted: response.SnapshotOmitted,
 		Stderr:          response.Stderr,
 		Error:           response.Error,
+		Correction:      response.Correction,
 		Issues:          response.Issues,
 	}
 }
@@ -1573,6 +1645,9 @@ func sessionActionTestLines(action SessionActionRecord) []string {
 	case "go-forward":
 		return []string{"await page.goForward();"}
 	case "click":
+		if len(action.Args) > 2 && action.Args[2] == "--force" && locator != "" {
+			return []string{"await " + locator + ".click({ force: true });"}
+		}
 		return locatorAction(locator, "click")
 	case "dblclick":
 		return locatorAction(locator, "dblclick")
@@ -1583,12 +1658,22 @@ func sessionActionTestLines(action SessionActionRecord) []string {
 	case "uncheck":
 		return locatorAction(locator, "uncheck")
 	case "fill":
-		return []string{"await " + locator + ".fill(" + quoted(2) + ");"}
+		lines := []string{"await " + locator + ".fill(" + quoted(2) + ");"}
+		if len(action.Args) > 3 && action.Args[3] == "--submit" {
+			lines = append(lines, "await "+locator+".press(\"Enter\");")
+		}
+		return lines
 	case "select":
 		return []string{"await " + locator + ".selectOption(" + quoted(2) + ");"}
 	case "type":
+		if len(action.Args) > 2 && locator != "" {
+			return []string{"await " + locator + ".pressSequentially(" + quoted(2) + ");"}
+		}
 		return []string{"await page.keyboard.type(" + quoted(1) + ");"}
 	case "press":
+		if len(action.Args) > 2 && locator != "" {
+			return []string{"await " + locator + ".press(" + quoted(2) + ");"}
+		}
 		return []string{"await page.keyboard.press(" + quoted(1) + ");"}
 	case "resize":
 		if len(action.Args) < 3 {
@@ -1602,7 +1687,7 @@ func sessionActionTestLines(action SessionActionRecord) []string {
 
 func shouldObserveAfterSessionAction(action string) bool {
 	switch action {
-	case "click", "dblclick", "drag", "fill", "select", "check", "uncheck", "hover", "press", "type", "tap", "focus", "goto", "reload", "go-back", "go-forward", "resize", "set-input-files":
+	case "click", "dblclick", "drag", "fill", "select", "check", "uncheck", "hover", "press", "type", "tap", "focus", "goto", "reload", "go-back", "go-forward", "resize", "set-input-files", "wait", "mouse":
 		return true
 	default:
 		return false
