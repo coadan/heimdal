@@ -18,3 +18,7 @@ must delegate browser work to the project's official `playwright-cli` package.
 The Go layer may create a session config, launch a project fixture process,
 capture evidence, and write JSON; it must not become a competing Playwright
 implementation.
+
+Keep Heimdal repository-independent. Source, tests, docs, examples, and the
+embedded skill use generic project and fixture names, never names or contracts
+from a consuming repository.

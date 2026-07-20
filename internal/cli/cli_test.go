@@ -14,7 +14,7 @@ import (
 func TestParseRunOptionsPreservesPlaywrightArgs(t *testing.T) {
 	options, err := parseRunOptions([]string{
 		"--dir", "/tmp/project",
-		"--run-id", "branch/run",
+		"--run-id", "branch-run",
 		"--headed",
 		"tests/example.spec.ts",
 		"--grep", "victory",
@@ -24,7 +24,7 @@ func TestParseRunOptionsPreservesPlaywrightArgs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if options.Root != "/tmp/project" || options.RunID != "branch/run" || !options.Headed {
+	if options.Root != "/tmp/project" || options.RunID != "branch-run" || !options.Headed {
 		t.Fatalf("unexpected options: %#v", options)
 	}
 	want := []string{"tests/example.spec.ts", "--grep", "victory", "--project=chromium"}
@@ -33,10 +33,13 @@ func TestParseRunOptionsPreservesPlaywrightArgs(t *testing.T) {
 	}
 }
 
-func TestDirectoryFlagsRejectConflicts(t *testing.T) {
-	_, err := parseRunOptions([]string{"--dir", "/tmp/one", "--root", "/tmp/two"})
-	if err == nil || !strings.Contains(err.Error(), "conflicting --dir and --root values") {
-		t.Fatalf("expected conflicting directory flags error, got %v", err)
+func TestDirectoryFlagKeepsRootCompatibilityWithoutAmbiguity(t *testing.T) {
+	legacy, err := parseRunOptions([]string{"--root", "/tmp/project"})
+	if err != nil || legacy.Root != "/tmp/project" {
+		t.Fatalf("legacy root option = %#v, %v", legacy, err)
+	}
+	if _, err := parseRunOptions([]string{"--dir", "/tmp/one", "--root", "/tmp/two"}); err == nil || !strings.Contains(err.Error(), "cannot specify different") {
+		t.Fatalf("conflicting directory options should fail clearly, got %v", err)
 	}
 }
 
@@ -45,19 +48,21 @@ func TestRunEnvironmentUsesConfiguredIsolationNames(t *testing.T) {
 		Root:   "/tmp/project",
 		Branch: "codex/test",
 		Config: Config{Playwright: PlaywrightConfig{
-			RunIDEnv: "VOID_RUN_ID",
-			PortEnv:  "VOID_PORT",
+			RunIDEnv: "APP_RUN_ID",
+			PortEnv:  "APP_PORT",
 			Env: map[string]string{
-				"VOID_ARTIFACTS": "${RUN_DIR}",
+				"APP_ARTIFACTS": "${RUN_DIR}",
 			},
 		}},
 	}
 	env := strings.Join(runEnvironment(project, "run-1", "/tmp/run-1", "/tmp/run-1/test-results", "/tmp/run-1/report", 4567), "\n")
 	for _, expected := range []string{
 		"HEIMDAL_RUN_ID=run-1",
-		"VOID_RUN_ID=run-1",
-		"VOID_PORT=4567",
-		"VOID_ARTIFACTS=/tmp/run-1",
+		"HEIMDAL_RUN_METADATA_DIR=/tmp/run-1/metadata",
+		"HEIMDAL_RUN_SIGNALS_DIR=/tmp/run-1/signals",
+		"APP_RUN_ID=run-1",
+		"APP_PORT=4567",
+		"APP_ARTIFACTS=/tmp/run-1",
 	} {
 		if !strings.Contains(env, expected) {
 			t.Fatalf("environment did not contain %q:\n%s", expected, env)
@@ -141,10 +146,123 @@ func TestRunResultJSONIsStable(t *testing.T) {
 	}
 }
 
+func TestLiveRunReportPrecedesCompletionAndDetectsStaleHeartbeat(t *testing.T) {
+	artifactRoot := t.TempDir()
+	runDir := filepath.Join(artifactRoot, "run-one")
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := RunManifest{
+		SchemaVersion: 1,
+		RunID:         "run-one",
+		Status:        "running",
+		StartedAt:     time.Now().UTC(),
+		Artifacts:     Artifacts{RunDir: runDir},
+	}
+	if err := writeJSON(filepath.Join(runDir, "run.json"), manifest); err != nil {
+		t.Fatal(err)
+	}
+	heartbeat := filepath.Join(runDir, ".heartbeat")
+	if err := os.WriteFile(heartbeat, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := publishCoordinationMetadata(runDir, "fixture", []byte(`{"port":4173}`)); err != nil {
+		t.Fatal(err)
+	}
+	selected, err := findReportRunDirectory(artifactRoot, "latest")
+	if err != nil || selected != runDir {
+		t.Fatalf("latest live run = %q, %v; want %q", selected, err, runDir)
+	}
+	report, code, err := readRunReport(runDir)
+	if err != nil || code != 0 || report.(RunManifest).Status != "running" {
+		t.Fatalf("live report = %#v, code %d, err %v", report, code, err)
+	}
+	if got := string(report.(RunManifest).Metadata["fixture"]); got != `{"port":4173}` {
+		t.Fatalf("live report metadata = %s", got)
+	}
+	old := time.Now().Add(-time.Minute)
+	if err := os.Chtimes(heartbeat, old, old); err != nil {
+		t.Fatal(err)
+	}
+	report, code, err = readRunReport(runDir)
+	if err != nil || code != 1 || report.(RunManifest).Status != "stale" {
+		t.Fatalf("stale report = %#v, code %d, err %v", report, code, err)
+	}
+	result := RunResult{
+		SchemaVersion: 1,
+		RunID:         "run-one",
+		Status:        "passed",
+		StartedAt:     manifest.StartedAt,
+		ExitCode:      0,
+		Artifacts:     Artifacts{RunDir: runDir},
+	}
+	if err := writeJSON(filepath.Join(runDir, "result.json"), result); err != nil {
+		t.Fatal(err)
+	}
+	report, code, err = readRunReport(runDir)
+	if err != nil || code != 0 || report.(RunResult).Status != "passed" {
+		t.Fatalf("completed report = %#v, code %d, err %v", report, code, err)
+	}
+	if got := string(report.(RunResult).Metadata["fixture"]); got != `{"port":4173}` {
+		t.Fatalf("completed report metadata = %s", got)
+	}
+}
+
+func TestReportRunSelectorRejectsTraversal(t *testing.T) {
+	if _, err := findReportRunDirectory(t.TempDir(), "../other"); err == nil || !strings.Contains(err.Error(), "run id") {
+		t.Fatalf("traversal selector should fail clearly, got %v", err)
+	}
+}
+
+func TestDefaultRunIDIsValidForEmptyAndLongBranchNames(t *testing.T) {
+	now := time.Date(2026, time.July, 20, 12, 0, 0, 0, time.UTC)
+	for _, branch := range []string{"", strings.Repeat("very-long-branch/", 30)} {
+		runID := defaultRunID(branch, now)
+		if !validArtifactID(runID) {
+			t.Fatalf("default run id %q is invalid", runID)
+		}
+	}
+}
+
+func TestTopLevelCoordinationCommandsAndReportShareOneRun(t *testing.T) {
+	root, _ := coordinationTestRun(t, "run-1")
+	t.Setenv("HEIMDAL_RUN_DIR", "")
+	payload := filepath.Join(t.TempDir(), "diagnostics.json")
+	if err := os.WriteFile(payload, []byte(`{"database":"fixture-test"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	invoke := func(args ...string) string {
+		t.Helper()
+		var out, errOut strings.Builder
+		if code := Run(context.Background(), args, &out, &errOut); code != 0 {
+			t.Fatalf("heimdal %s exited %d: stdout=%s stderr=%s", strings.Join(args, " "), code, out.String(), errOut.String())
+		}
+		return out.String()
+	}
+
+	invoke("metadata", "publish", "fixture.diagnostics", "--dir", root, "--run", "run-1", "--file", payload, "--json")
+	invoke("signal", "send", "diagnostics.ready", "--dir", root, "--run", "run-1", "--json")
+	invoke("signal", "wait", "diagnostics.ready", "--dir", root, "--run", "run-1", "--timeout", "1s", "--json")
+
+	var report RunResult
+	if err := json.Unmarshal([]byte(invoke("report", "--dir", root, "--run", "run-1", "--json")), &report); err != nil {
+		t.Fatal(err)
+	}
+	var diagnostics struct {
+		Database string `json:"database"`
+	}
+	if err := json.Unmarshal(report.Metadata["fixture.diagnostics"], &diagnostics); err != nil {
+		t.Fatal(err)
+	}
+	if diagnostics.Database != "fixture-test" {
+		t.Fatalf("report metadata = %s", report.Metadata["fixture.diagnostics"])
+	}
+}
+
 func TestParseSessionOptions(t *testing.T) {
 	options, err := parseSessionOptions([]string{
-		"--root", "/tmp/project",
-		"--name", "void/auth",
+		"--dir", "/tmp/project",
+		"--name", "demo/auth",
 		"--url", "http://127.0.0.1:${PORT}",
 		"--port", "4567",
 		"--headed",
@@ -157,7 +275,7 @@ func TestParseSessionOptions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if options.Root != "/tmp/project" || options.Name != "void/auth" || options.Port != 4567 {
+	if options.Root != "/tmp/project" || options.Name != "demo/auth" || options.Port != 4567 {
 		t.Fatalf("unexpected session options: %#v", options)
 	}
 	if !options.Headed || !options.Persistent || options.Timeout != 9*time.Second {

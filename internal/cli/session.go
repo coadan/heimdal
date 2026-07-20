@@ -173,7 +173,7 @@ Usage:
   heimdal session <PLAYWRIGHT_CLI_COMMAND> [options]
 
 Start options:
-  --dir DIR        Locate the session from DIR (persisted root is canonicalized)
+  --dir PATH       Discover the worktree from PATH (persisted for named-session lookup)
   --name NAME      Named persistent agent session (default: default)
   --url URL        URL to open, or session.url from .heimdal.json
   --run-id ID      Session artifact identity
@@ -190,7 +190,7 @@ Start options:
   --json           Print only agent-readable JSON
 
 Examples:
-  heimdal session start --name void --headed
+  heimdal session start --name qa --headed
   heimdal session observe
   heimdal session click e12
   heimdal session fill e5 "hello"
@@ -577,11 +577,14 @@ func parseSessionOptions(args []string) (SessionOptions, error) {
 		}
 		switch arg {
 		case "--dir", "--root":
-			value, next, err := nextDirectoryValue(args, i, options.Root)
+			value, next, err := nextValue(args, i, arg)
 			if err != nil {
 				return options, err
 			}
-			i, options.Root = next, value
+			if err := setDirectoryOption(&options.Root, value, arg); err != nil {
+				return options, err
+			}
+			i = next
 		case "--name", "--session":
 			value, next, err := nextValue(args, i, arg)
 			if err != nil {

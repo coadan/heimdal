@@ -15,8 +15,8 @@ import (
 const usage = `Heimdal — agent-oriented Playwright orchestration
 
 Usage:
-  heimdal doctor [--dir DIR] [--json]
-  heimdal init [--dir DIR] [--force]
+  heimdal doctor [--dir PATH] [--json]
+  heimdal init [--dir PATH] [--force]
   heimdal run [options] [-- PLAYWRIGHT_ARGS...]
   heimdal list [options] [-- PLAYWRIGHT_ARGS...]
   heimdal session start [options]
@@ -27,14 +27,18 @@ Usage:
   heimdal session diagnose [options]
   heimdal session save [options]
   heimdal session <PLAYWRIGHT_CLI_COMMAND> [options]
-  heimdal report [--dir DIR] [--run ID] [--json]
-  heimdal trace [--dir DIR] [--run ID] [TRACE]
-  heimdal install [--dir DIR] [BROWSER...|agent-cli|agent-browser]
+  heimdal report [--dir PATH] [--run ID] [--json]
+  heimdal trace [--dir PATH] [--run ID] [TRACE]
+  heimdal metadata publish NAMESPACE [--dir PATH] [--run ID] [--file FILE|-] [--json]
+  heimdal metadata get [NAMESPACE] [--dir PATH] [--run ID] [--json]
+  heimdal signal send NAME [--dir PATH] [--run ID] [--json]
+  heimdal signal wait NAME [--dir PATH] [--run ID] [--timeout DURATION] [--json]
+  heimdal install [--dir PATH] [BROWSER...|agent-cli|agent-browser]
   heimdal skill install [--destination DIR] [--force]
   heimdal skill path
 
 Run options:
-  --dir DIR        Locate the project from DIR (defaults to the current directory)
+  --dir PATH       Discover the project from PATH (defaults to the current directory)
   --run-id ID      Stable artifact/run identity
   --artifacts DIR  Override the artifact root
   --port PORT      Override the project isolation port
@@ -43,7 +47,7 @@ Run options:
   --json           Print only the agent-readable result JSON
 
 Session options:
-  --dir DIR        Locate the session from DIR; persisted root is canonicalized
+  --dir PATH       Discover the worktree from PATH; persisted on session start
   --name NAME      Named persistent Playwright agent session
   --url URL        URL to open, or project session.url
   --profile DIR    Persistent browser profile directory
@@ -82,6 +86,10 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return runReport(args[1:], out, errOut)
 	case "trace":
 		return runTrace(ctx, args[1:], out, errOut)
+	case "metadata":
+		return runMetadata(ctx, args[1:], out, errOut)
+	case "signal":
+		return runSignal(ctx, args[1:], out, errOut)
 	case "install":
 		return runInstall(ctx, args[1:], out, errOut)
 	case "skill":
@@ -225,31 +233,38 @@ func runReport(args []string, out, errOut io.Writer) int {
 	if err != nil {
 		return reportError(asJSON, err, out, errOut)
 	}
-	path := ""
-	if runID != "" && runID != "latest" {
-		path = filepath.Join(artifactRoot(project, ""), sanitize(runID), "result.json")
+	runDir, err := findReportRunDirectory(artifactRoot(project, ""), runID)
+	if err != nil {
+		return reportError(asJSON, err, out, errOut)
 	}
-	var result RunResult
-	if path == "" {
-		result, err = findLatestResult(artifactRoot(project, ""))
-	} else {
-		result, err = readResult(path)
-	}
+	report, exitCode, err := readRunReport(runDir)
 	if err != nil {
 		return reportError(asJSON, err, out, errOut)
 	}
 	if asJSON {
-		_ = writeJSONTo(out, result)
+		_ = writeJSONTo(out, report)
 	} else {
-		printResult(out, result)
-		if len(result.Artifacts.Files) > 0 {
-			fmt.Fprintln(out, "Files:")
-			for _, file := range result.Artifacts.Files {
-				fmt.Fprintf(out, "  %s\n", file)
+		switch value := report.(type) {
+		case RunResult:
+			printResult(out, value)
+			if len(value.Artifacts.Files) > 0 {
+				fmt.Fprintln(out, "Files:")
+				for _, file := range value.Artifacts.Files {
+					fmt.Fprintf(out, "  %s\n", file)
+				}
+			}
+		case RunManifest:
+			fmt.Fprintf(out, "Result: %s\n", value.Status)
+			fmt.Fprintf(out, "Artifacts: %s\n", value.Artifacts.RunDir)
+			if len(value.Artifacts.Files) > 0 {
+				fmt.Fprintln(out, "Files:")
+				for _, file := range value.Artifacts.Files {
+					fmt.Fprintf(out, "  %s\n", file)
+				}
 			}
 		}
 	}
-	return normalizeExitCode(result.ExitCode)
+	return exitCode
 }
 
 func runTrace(ctx context.Context, args []string, out, errOut io.Writer) int {
@@ -266,7 +281,10 @@ func runTrace(ctx context.Context, args []string, out, errOut io.Writer) int {
 		if runID == "" || runID == "latest" {
 			result, err = findLatestResult(artifactRoot(project, ""))
 		} else {
-			result, err = readResult(filepath.Join(artifactRoot(project, ""), sanitize(runID), "result.json"))
+			if !validArtifactID(runID) {
+				return reportError(false, errors.New("run id must contain only lowercase letters, numbers, and hyphens"), out, errOut)
+			}
+			result, err = readResult(filepath.Join(artifactRoot(project, ""), runID, "result.json"))
 		}
 		if err == nil {
 			tracePath, err = findTrace(result.Artifacts.RunDir)
@@ -367,12 +385,14 @@ func parseRunOptions(args []string) (RunOptions, error) {
 		}
 		switch arg {
 		case "--dir", "--root":
-			value, next, err := nextDirectoryValue(args, i, options.Root)
+			value, next, err := nextValue(args, i, arg)
 			if err != nil {
 				return options, err
 			}
 			i = next
-			options.Root = value
+			if err := setDirectoryOption(&options.Root, value, arg); err != nil {
+				return options, err
+			}
 		case "--json":
 			options.JSON = true
 		case "--headed":
@@ -431,12 +451,15 @@ func parseSimpleOptions(args []string, allowJSON bool) (string, bool, error) {
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--dir", "--root":
-			value, next, err := nextDirectoryValue(args, i, root)
+			flag := args[i]
+			value, next, err := nextValue(args, i, flag)
 			if err != nil {
 				return root, asJSON, err
 			}
 			i = next
-			root = value
+			if err := setDirectoryOption(&root, value, flag); err != nil {
+				return root, asJSON, err
+			}
 		case "--json":
 			if !allowJSON {
 				return root, asJSON, errors.New("--json is not supported here")
@@ -457,12 +480,15 @@ func parseInitOptions(args []string) (string, bool, error) {
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--dir", "--root":
-			value, next, err := nextDirectoryValue(args, i, root)
+			flag := args[i]
+			value, next, err := nextValue(args, i, flag)
 			if err != nil {
 				return root, force, err
 			}
 			i = next
-			root = value
+			if err := setDirectoryOption(&root, value, flag); err != nil {
+				return root, force, err
+			}
 		case "--force":
 			force = true
 		default:
@@ -496,12 +522,15 @@ func parseSimpleOptionsWithoutUnknown(args []string) (string, bool, error) {
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--dir", "--root":
-			value, next, err := nextDirectoryValue(args, i, root)
+			flag := args[i]
+			value, next, err := nextValue(args, i, flag)
 			if err != nil {
 				return root, asJSON, err
 			}
 			i = next
-			root = value
+			if err := setDirectoryOption(&root, value, flag); err != nil {
+				return root, asJSON, err
+			}
 		case "--json":
 			asJSON = true
 		case "--run":
@@ -525,12 +554,15 @@ func parseTraceOptions(args []string) (string, string, string, error) {
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--dir", "--root":
-			value, next, err := nextDirectoryValue(args, i, root)
+			flag := args[i]
+			value, next, err := nextValue(args, i, flag)
 			if err != nil {
 				return root, runID, trace, err
 			}
 			i = next
-			root = value
+			if err := setDirectoryOption(&root, value, flag); err != nil {
+				return root, runID, trace, err
+			}
 		case "--run":
 			value, next, err := nextValue(args, i, "--run")
 			if err != nil {
@@ -556,12 +588,15 @@ func parseRootAndForward(args []string) (string, []string, error) {
 	var forwarded []string
 	for i := 0; i < len(args); i++ {
 		if args[i] == "--dir" || args[i] == "--root" {
-			value, next, err := nextDirectoryValue(args, i, root)
+			flag := args[i]
+			value, next, err := nextValue(args, i, flag)
 			if err != nil {
 				return root, forwarded, err
 			}
 			i = next
-			root = value
+			if err := setDirectoryOption(&root, value, flag); err != nil {
+				return root, forwarded, err
+			}
 			continue
 		}
 		forwarded = append(forwarded, args[i])
@@ -569,15 +604,15 @@ func parseRootAndForward(args []string) (string, []string, error) {
 	return root, forwarded, nil
 }
 
-func nextDirectoryValue(args []string, index int, current string) (string, int, error) {
-	value, next, err := nextValue(args, index, args[index])
-	if err != nil {
-		return current, index, err
+func setDirectoryOption(current *string, value, flag string) error {
+	if value == "" {
+		return fmt.Errorf("%s requires a non-empty path", flag)
 	}
-	if current != "" && filepath.Clean(current) != filepath.Clean(value) {
-		return current, index, fmt.Errorf("conflicting --dir and --root values: %q and %q", current, value)
+	if *current != "" && filepath.Clean(*current) != filepath.Clean(value) {
+		return fmt.Errorf("--dir and --root cannot specify different paths")
 	}
-	return value, next, nil
+	*current = value
+	return nil
 }
 
 func relativeToRoot(root, value string) string {

@@ -142,7 +142,7 @@ func discoverSession(options SessionOptions) (Project, SessionState, string, err
 		if name == "" {
 			name = defaultSessionName
 		}
-		return Project{}, SessionState{}, "", fmt.Errorf("session %q was not found from the current directory; start it with `heimdal session start --dir DIR --name %s` or pass --dir", name, name)
+		return Project{}, SessionState{}, "", fmt.Errorf("session %q was not found from the current directory; start it with `heimdal session start --dir PATH --name %s` or pass --dir", name, name)
 	}
 	if len(indexes) > 1 {
 		roots := make([]string, len(indexes))

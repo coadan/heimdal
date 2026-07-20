@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -27,23 +28,46 @@ type RunOptions struct {
 }
 
 type RunResult struct {
-	SchemaVersion int       `json:"schema_version"`
-	RunID         string    `json:"run_id"`
-	Status        string    `json:"status"`
-	ExitCode      int       `json:"exit_code"`
-	StartedAt     time.Time `json:"started_at"`
-	FinishedAt    time.Time `json:"finished_at"`
-	DurationMS    int64     `json:"duration_ms"`
-	Root          string    `json:"root"`
-	Branch        string    `json:"branch"`
-	Command       []string  `json:"command"`
-	CommandLine   string    `json:"command_line"`
-	Playwright    string    `json:"playwright_config,omitempty"`
-	Port          int       `json:"port,omitempty"`
-	Failure       string    `json:"failure,omitempty"`
-	StdoutTail    string    `json:"stdout_tail,omitempty"`
-	StderrTail    string    `json:"stderr_tail,omitempty"`
-	Artifacts     Artifacts `json:"artifacts"`
+	SchemaVersion int                        `json:"schema_version"`
+	RunID         string                     `json:"run_id"`
+	Status        string                     `json:"status"`
+	ExitCode      int                        `json:"exit_code"`
+	StartedAt     time.Time                  `json:"started_at"`
+	FinishedAt    time.Time                  `json:"finished_at"`
+	DurationMS    int64                      `json:"duration_ms"`
+	Root          string                     `json:"root"`
+	Branch        string                     `json:"branch"`
+	Command       []string                   `json:"command"`
+	CommandLine   string                     `json:"command_line"`
+	Playwright    string                     `json:"playwright_config,omitempty"`
+	Port          int                        `json:"port,omitempty"`
+	Failure       string                     `json:"failure,omitempty"`
+	StdoutTail    string                     `json:"stdout_tail,omitempty"`
+	StderrTail    string                     `json:"stderr_tail,omitempty"`
+	Artifacts     Artifacts                  `json:"artifacts"`
+	Metadata      map[string]json.RawMessage `json:"metadata,omitempty"`
+	MetadataError string                     `json:"metadata_error,omitempty"`
+}
+
+// RunManifest is written as soon as Playwright starts so report and
+// coordination commands can inspect a live run before result.json exists.
+// result.json remains the immutable completion record.
+type RunManifest struct {
+	SchemaVersion int                        `json:"schema_version"`
+	RunID         string                     `json:"run_id"`
+	Status        string                     `json:"status"`
+	OwnerPID      int                        `json:"owner_pid"`
+	ChildPID      int                        `json:"child_pid"`
+	StartedAt     time.Time                  `json:"started_at"`
+	Root          string                     `json:"root"`
+	Branch        string                     `json:"branch"`
+	Command       []string                   `json:"command"`
+	CommandLine   string                     `json:"command_line"`
+	Playwright    string                     `json:"playwright_config,omitempty"`
+	Port          int                        `json:"port,omitempty"`
+	Artifacts     Artifacts                  `json:"artifacts"`
+	Metadata      map[string]json.RawMessage `json:"metadata,omitempty"`
+	MetadataError string                     `json:"metadata_error,omitempty"`
 }
 
 type Artifacts struct {
@@ -62,9 +86,8 @@ func executeRun(ctx context.Context, project Project, options RunOptions, out, e
 	if runID == "" {
 		runID = defaultRunID(project.Branch, started)
 	}
-	runID = sanitize(runID)
-	if runID == "" {
-		return RunResult{}, errors.New("run id must contain a letter or number")
+	if !validArtifactID(runID) {
+		return RunResult{}, errors.New("run id must contain only lowercase letters, numbers, and hyphens")
 	}
 	root := artifactRoot(project, options.Artifacts)
 	runDir := filepath.Join(root, runID)
@@ -129,7 +152,43 @@ func executeRun(ctx context.Context, project Project, options RunOptions, out, e
 	cmd.Env = env
 	cmd.Stdout = stdoutWriter
 	cmd.Stderr = stderrWriter
-	err = cmd.Run()
+	if err = cmd.Start(); err == nil {
+		stopHeartbeat, heartbeatErr := startRunHeartbeat(filepath.Join(runDir, ".heartbeat"))
+		if heartbeatErr != nil {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+			return RunResult{}, heartbeatErr
+		}
+		defer stopHeartbeat()
+		manifest := RunManifest{
+			SchemaVersion: 1,
+			RunID:         runID,
+			Status:        "running",
+			OwnerPID:      os.Getpid(),
+			ChildPID:      cmd.Process.Pid,
+			StartedAt:     started,
+			Root:          project.Root,
+			Branch:        project.Branch,
+			Command:       append([]string(nil), command...),
+			CommandLine:   commandString(command),
+			Playwright:    project.PlaywrightConfig,
+			Port:          port,
+			Artifacts: Artifacts{
+				RunDir:     runDir,
+				Stdout:     stdoutPath,
+				Stderr:     stderrPath,
+				Result:     filepath.Join(runDir, "result.json"),
+				TestOutput: testOutput,
+				Report:     report,
+			},
+		}
+		if manifestErr := writeJSON(filepath.Join(runDir, "run.json"), manifest); manifestErr != nil {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+			return RunResult{}, fmt.Errorf("write live run manifest: %w", manifestErr)
+		}
+		err = cmd.Wait()
+	}
 	finished := time.Now().UTC()
 	result := RunResult{
 		SchemaVersion: 1,
@@ -168,6 +227,10 @@ func executeRun(ctx context.Context, project Project, options RunOptions, out, e
 			result.Failure = ctx.Err().Error()
 		}
 	}
+	result.Metadata, err = allCoordinationMetadata(runDir)
+	if err != nil {
+		result.MetadataError = err.Error()
+	}
 	result.Artifacts.Files = artifactFiles(runDir)
 	if err := writeJSON(result.Artifacts.Result, result); err != nil {
 		return result, err
@@ -176,6 +239,33 @@ func executeRun(ctx context.Context, project Project, options RunOptions, out, e
 		printResult(out, result)
 	}
 	return result, nil
+}
+
+func startRunHeartbeat(path string) (func(), error) {
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		return nil, fmt.Errorf("create run heartbeat: %w", err)
+	}
+	done := make(chan struct{})
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		ticker := time.NewTicker(2 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				now := time.Now()
+				_ = os.Chtimes(path, now, now)
+			case <-done:
+				return
+			}
+		}
+	}()
+	return func() {
+		close(done)
+		<-stopped
+		_ = os.Remove(path)
+	}, nil
 }
 
 func runEnvironment(project Project, runID, runDir, testOutput, report string, port int) []string {
@@ -204,6 +294,8 @@ func runEnvironment(project Project, runID, runDir, testOutput, report string, p
 	}
 	setEnv("HEIMDAL_RUN_ID", runID)
 	setEnv("HEIMDAL_RUN_DIR", runDir)
+	setEnv("HEIMDAL_RUN_METADATA_DIR", filepath.Join(runDir, "metadata"))
+	setEnv("HEIMDAL_RUN_SIGNALS_DIR", filepath.Join(runDir, "signals"))
 	setEnv("HEIMDAL_ARTIFACT_DIR", runDir)
 	setEnv("HEIMDAL_PLAYWRIGHT_OUTPUT_DIR", testOutput)
 	setEnv("HEIMDAL_PLAYWRIGHT_REPORT_DIR", report)
@@ -232,7 +324,17 @@ func runEnvironment(project Project, runID, runDir, testOutput, report string, p
 }
 
 func defaultRunID(branch string, now time.Time) string {
-	return fmt.Sprintf("%s-%s-%d", sanitize(branch), now.Format("20060102t150405.000000000z"), os.Getpid())
+	slug := sanitize(branch)
+	if slug == "" {
+		slug = "run"
+	}
+	suffix := fmt.Sprintf("-%s-%d", now.Format("20060102t150405000000000z"), os.Getpid())
+	if len(slug)+len(suffix) > 160 {
+		digest := sha256.Sum256([]byte(branch))
+		hash := fmt.Sprintf("-%x", digest[:6])
+		slug = strings.TrimRight(slug[:160-len(suffix)-len(hash)], "-") + hash
+	}
+	return slug + suffix
 }
 
 func freePort() (int, error) {
@@ -255,7 +357,7 @@ func processExitCode(err error) int {
 func artifactFiles(root string) []string {
 	var files []string
 	_ = filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
-		if err != nil || entry.IsDir() || filepath.Base(path) == "result.json" {
+		if err != nil || entry.IsDir() || filepath.Base(path) == "result.json" || filepath.Base(path) == ".heartbeat" {
 			return nil
 		}
 		files = append(files, path)
@@ -292,6 +394,98 @@ func findLatestResult(root string) (RunResult, error) {
 	return readResult(candidates[0].path)
 }
 
+func findReportRunDirectory(root, selector string) (string, error) {
+	if selector != "" && selector != "latest" {
+		if !validArtifactID(selector) {
+			return "", fmt.Errorf("run id must contain only lowercase letters, numbers, and hyphens")
+		}
+		runDir := filepath.Join(root, selector)
+		info, err := os.Lstat(runDir)
+		if err != nil {
+			return "", fmt.Errorf("find Heimdal run %s: %w", selector, err)
+		}
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return "", fmt.Errorf("Heimdal run %s is not a directory", selector)
+		}
+		return runDir, nil
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return "", fmt.Errorf("read artifact directory %s: %w", root, err)
+	}
+	type candidate struct {
+		directory string
+		startedAt time.Time
+	}
+	var candidates []candidate
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		runDir := filepath.Join(root, entry.Name())
+		if result, resultErr := readResult(filepath.Join(runDir, "result.json")); resultErr == nil {
+			candidates = append(candidates, candidate{directory: runDir, startedAt: result.StartedAt})
+			continue
+		}
+		if manifest, manifestErr := readRunManifest(filepath.Join(runDir, "run.json")); manifestErr == nil {
+			candidates = append(candidates, candidate{directory: runDir, startedAt: manifest.StartedAt})
+		}
+	}
+	if len(candidates) == 0 {
+		return "", fmt.Errorf("no Heimdal runs found in %s", root)
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].startedAt.Equal(candidates[j].startedAt) {
+			return candidates[i].directory > candidates[j].directory
+		}
+		return candidates[i].startedAt.After(candidates[j].startedAt)
+	})
+	return candidates[0].directory, nil
+}
+
+func validArtifactID(value string) bool {
+	if value == "" || len(value) > 160 {
+		return false
+	}
+	for index, char := range value {
+		if (char >= 'a' && char <= 'z') || (char >= '0' && char <= '9') || (char == '-' && index > 0) {
+			continue
+		}
+		return false
+	}
+	return !strings.HasSuffix(value, "-")
+}
+
+func readRunReport(runDir string) (any, int, error) {
+	if result, err := readResult(filepath.Join(runDir, "result.json")); err == nil {
+		result.Artifacts.Files = artifactFiles(runDir)
+		metadata, metadataErr := allCoordinationMetadata(runDir)
+		if metadataErr != nil {
+			result.MetadataError = metadataErr.Error()
+		} else {
+			result.Metadata = metadata
+		}
+		return result, normalizeExitCode(result.ExitCode), nil
+	}
+	manifest, err := readRunManifest(filepath.Join(runDir, "run.json"))
+	if err != nil {
+		return nil, 1, err
+	}
+	manifest.Artifacts.Files = artifactFiles(runDir)
+	metadata, metadataErr := allCoordinationMetadata(runDir)
+	if metadataErr != nil {
+		manifest.MetadataError = metadataErr.Error()
+	} else {
+		manifest.Metadata = metadata
+	}
+	heartbeat, heartbeatErr := os.Stat(filepath.Join(runDir, ".heartbeat"))
+	if heartbeatErr != nil || time.Since(heartbeat.ModTime()) > 15*time.Second {
+		manifest.Status = "stale"
+		return manifest, 1, nil
+	}
+	return manifest, 0, nil
+}
+
 func readResult(path string) (RunResult, error) {
 	contents, err := os.ReadFile(path)
 	if err != nil {
@@ -302,6 +496,21 @@ func readResult(path string) (RunResult, error) {
 		return RunResult{}, fmt.Errorf("parse %s: %w", path, err)
 	}
 	return result, nil
+}
+
+func readRunManifest(path string) (RunManifest, error) {
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		return RunManifest{}, fmt.Errorf("read %s: %w", path, err)
+	}
+	var manifest RunManifest
+	if err := json.Unmarshal(contents, &manifest); err != nil {
+		return RunManifest{}, fmt.Errorf("parse %s: %w", path, err)
+	}
+	if manifest.SchemaVersion != 1 || manifest.RunID == "" || manifest.Status != "running" {
+		return RunManifest{}, fmt.Errorf("unsupported live run manifest %s", path)
+	}
+	return manifest, nil
 }
 
 func findTrace(runDir string) (string, error) {
@@ -328,7 +537,28 @@ func writeJSON(path string, value any) error {
 		return err
 	}
 	contents = append(contents, '\n')
-	return os.WriteFile(path, contents, 0o644)
+	temporary, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-")
+	if err != nil {
+		return err
+	}
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	if err := temporary.Chmod(0o644); err != nil {
+		_ = temporary.Close()
+		return err
+	}
+	if _, err := temporary.Write(contents); err != nil {
+		_ = temporary.Close()
+		return err
+	}
+	if err := temporary.Sync(); err != nil {
+		_ = temporary.Close()
+		return err
+	}
+	if err := temporary.Close(); err != nil {
+		return err
+	}
+	return os.Rename(temporaryPath, path)
 }
 
 func printResult(out io.Writer, result RunResult) {
