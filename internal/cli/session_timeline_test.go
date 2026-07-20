@@ -132,6 +132,27 @@ func TestSessionReportDoesNotTreatZeroErrorCheckAsIssue(t *testing.T) {
 	}
 }
 
+func TestSessionReportSuggestsLowerRoundTripPatternsWithoutCreatingIssues(t *testing.T) {
+	started := time.Now().UTC().Add(-time.Hour)
+	entries := make([]SessionTimelineEntry, 0, 40)
+	for sequence := 1; sequence <= 40; sequence++ {
+		category, command := "interaction", []string{"click", "e2"}
+		if sequence <= 12 {
+			category, command = "evidence", []string{"find", "Continue"}
+		}
+		entries = append(entries, SessionTimelineEntry{Sequence: sequence, Category: category, Command: command, Status: "passed"})
+	}
+	timeline := SessionTimeline{Actions: len(entries), Snapshots: 12, Entries: entries}
+	report := summarizeSessionTimeline(SessionState{Name: "qa", StartedAt: started}, timeline)
+	if report.Status != "active" || len(report.Issues) != 0 || len(report.Suggestions) != 3 {
+		t.Fatalf("workflow coaching changed diagnostic status: %#v", report)
+	}
+	codes := []string{report.Suggestions[0].Code, report.Suggestions[1].Code, report.Suggestions[2].Code}
+	if strings.Join(codes, ",") != "replace_evidence_polling,add_phase_checkpoint,batch_interactions" {
+		t.Fatalf("suggestions = %#v", report.Suggestions)
+	}
+}
+
 func TestSessionViewParsesTimelineFilters(t *testing.T) {
 	options, err := parseSessionViewOptions([]string{"qa", "--failures", "--from", "20", "--to", "40", "--category", "assertion", "--limit", "10", "--json"})
 	if err != nil || options.Name != "qa" || !options.JSON || !options.Explicit || !options.FailuresOnly || options.From != 20 || options.To != 40 || options.Category != "assertion" || options.Limit != 10 {

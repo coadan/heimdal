@@ -160,6 +160,9 @@ Timeline and report output is a bounded phase/failure/recent-change view by
 default. Page long histories with `--from`, `--to`, `--limit`, `--category`, or
 `--failures`; follow `next_from`. Use `--json=full` only when every retained
 entry is necessary. A successful zero-error console check is not an issue.
+Treat report `suggestions` as workflow coaching, not failures: replace repeated
+snapshot/find polling with a semantic wait, checkpoint long phases, and batch
+safe consecutive interactions when the retained timeline supports it.
 Checkpoints label recoverable session state and appear in reports; they do not
 make arbitrary repository test fixtures resumable.
 

@@ -85,9 +85,16 @@ type SessionReport struct {
 	Phases         []SessionPhaseSummary  `json:"phases,omitempty"`
 	Categories     map[string]int         `json:"categories"`
 	Issues         []string               `json:"issues,omitempty"`
+	Suggestions    []SessionSuggestion    `json:"suggestions,omitempty"`
 	FailureEntries []SessionTimelineEntry `json:"failure_entries,omitempty"`
 	Recent         []SessionTimelineEntry `json:"recent"`
 	Artifacts      map[string]string      `json:"artifacts"`
+}
+
+type SessionSuggestion struct {
+	Code    string   `json:"code"`
+	Reason  string   `json:"reason"`
+	Command []string `json:"command"`
 }
 
 type sessionViewOptions struct {
@@ -145,6 +152,9 @@ func runSessionReport(args []string, out, errOut io.Writer) int {
 		}
 		for _, issue := range report.Issues {
 			fmt.Fprintf(out, "  issue: %s\n", issue)
+		}
+		for _, suggestion := range report.Suggestions {
+			fmt.Fprintf(out, "  suggestion: %s; try %s\n", suggestion.Reason, commandString(suggestion.Command))
 		}
 	}
 	return boolToCode(report.Status == "issues")
@@ -338,6 +348,7 @@ func summarizeSessionTimelineView(state SessionState, timeline SessionTimeline, 
 	if len(report.Issues) > 0 {
 		report.Status = "issues"
 	}
+	report.Suggestions = sessionWorkflowSuggestions(timeline)
 	report.Phases = compactSessionPhases(timeline.Phases, 12)
 	for index := len(timeline.Entries) - 1; index >= 0 && len(report.FailureEntries) < 12; index-- {
 		if timeline.Entries[index].Status == "failed" {
@@ -514,7 +525,7 @@ func sessionActionCategory(args []string) string {
 		return "interaction"
 	case "wait":
 		return "wait"
-	case "snapshot", "screenshot", "measure":
+	case "snapshot", "screenshot", "measure", "find", "highlight":
 		return "evidence"
 	case "expect":
 		return "assertion"
@@ -525,6 +536,61 @@ func sessionActionCategory(args []string) string {
 	default:
 		return "other"
 	}
+}
+
+func sessionWorkflowSuggestions(timeline SessionTimeline) []SessionSuggestion {
+	if timeline.Actions == 0 {
+		return nil
+	}
+	evidence, semanticWait := 0, false
+	consecutiveEvidence, maxEvidence := 0, 0
+	consecutiveInteractions, maxInteractions := 0, 0
+	for _, entry := range timeline.Entries {
+		if entry.Category == "evidence" {
+			evidence++
+			consecutiveEvidence++
+			if consecutiveEvidence > maxEvidence {
+				maxEvidence = consecutiveEvidence
+			}
+		} else {
+			consecutiveEvidence = 0
+		}
+		if entry.Category == "interaction" {
+			consecutiveInteractions++
+			if consecutiveInteractions > maxInteractions {
+				maxInteractions = consecutiveInteractions
+			}
+		} else {
+			consecutiveInteractions = 0
+		}
+		if entry.Category == "wait" {
+			joined := " " + strings.Join(entry.Command, " ") + " "
+			semanticWait = semanticWait || strings.Contains(joined, " --change ") || strings.Contains(joined, " --role ") || strings.Contains(joined, " --text ")
+		}
+	}
+	var suggestions []SessionSuggestion
+	if !semanticWait && evidence >= 6 && (evidence*4 >= timeline.Actions || maxEvidence >= 3) {
+		suggestions = append(suggestions, SessionSuggestion{
+			Code:    "replace_evidence_polling",
+			Reason:  fmt.Sprintf("%d evidence actions and no semantic wait indicate snapshot/find polling", evidence),
+			Command: []string{"heimdal", "session", "wait", "--change"},
+		})
+	}
+	if timeline.Checkpoints == 0 && timeline.Actions >= 30 {
+		suggestions = append(suggestions, SessionSuggestion{
+			Code:    "add_phase_checkpoint",
+			Reason:  fmt.Sprintf("%d actions have no phase checkpoint", timeline.Actions),
+			Command: []string{"heimdal", "session", "checkpoint", "<phase>"},
+		})
+	}
+	if maxInteractions >= 5 {
+		suggestions = append(suggestions, SessionSuggestion{
+			Code:    "batch_interactions",
+			Reason:  fmt.Sprintf("%d consecutive interactions can use one bounded batch", maxInteractions),
+			Command: []string{"heimdal", "session", "batch", "--file", "-"},
+		})
+	}
+	return suggestions
 }
 
 func summarizeSessionPhases(entries []SessionTimelineEntry) []SessionPhaseSummary {

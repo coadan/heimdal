@@ -91,8 +91,10 @@ Usage:
   heimdal session report [NAME] [--dir PATH] [--failures] [--category NAME]
                          [--from N] [--to N] [--limit N] [--json|--json=full]
 
-The default report contains bounded phases, causal failures, and recent
-meaningful changes. Successful zero-result diagnostic checks are not issues.
+The default report contains bounded phases, causal failures, recent meaningful
+changes, and non-failing suggestions when repeated evidence polling, missing
+checkpoints, or batchable interaction streaks are detected. Successful
+zero-result diagnostic checks are not issues.
 `,
 	"checkpoint": `Add a durable label to the current session timeline
 

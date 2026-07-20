@@ -229,6 +229,9 @@ The default timeline is a bounded phase, failure, and recent-change summary;
 `--json=full` only when every retained entry and evidence summary is required.
 Reports keep phases, failures, and recent meaningful changes bounded, and do
 not treat a successful `console error` check with zero errors as an issue.
+They also suggest `wait --change`, checkpoints, or batching when the timeline
+shows avoidable polling or round trips. Suggestions do not change session
+status, and Heimdal never rewrites actions automatically.
 Checkpoints are durable labels, not promises that an arbitrary Playwright test
 fixture can resume from that browser state.
 
