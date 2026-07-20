@@ -31,6 +31,10 @@ Usage:
   heimdal session save [options]
   heimdal session <PLAYWRIGHT_CLI_COMMAND> [options]
   heimdal report [--dir PATH] [--run ID] [--json]
+  heimdal runs list [--dir PATH] [--status STATUS] [--json]
+  heimdal runs show SELECTOR [--dir PATH] [--json]
+  heimdal runs compare OLD NEW [--dir PATH] [--json]
+  heimdal runs pin SELECTOR [--dir PATH] [--remove] [--json]
   heimdal trace [--dir PATH] [--run ID] [TRACE]
   heimdal gc [--dir PATH] [--dry-run] [options]
   heimdal metadata publish NAMESPACE [--dir PATH] [--run ID] [--file FILE|-] [--json]
@@ -99,6 +103,8 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return runSession(ctx, args[1:], out, errOut)
 	case "report":
 		return runReport(args[1:], out, errOut)
+	case "runs":
+		return runRuns(args[1:], out, errOut)
 	case "trace":
 		return runTrace(ctx, args[1:], out, errOut)
 	case "gc":
@@ -296,7 +302,7 @@ func runReport(args []string, out, errOut io.Writer) int {
 	if err != nil {
 		return reportError(asJSON, err, out, errOut)
 	}
-	report, exitCode, err := readRunReport(runDir)
+	report, exitCode, err := readRunReportDetailed(runDir, !asJSON || fullJSON)
 	if err != nil {
 		return reportError(asJSON, err, out, errOut)
 	}

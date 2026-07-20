@@ -90,8 +90,13 @@ func resolveTrace(project Project, runID, tracePath string) (string, *RunResult,
 	}
 	var result RunResult
 	var err error
-	if runID == "" || runID == "latest" {
+	if runID == "" {
+		runID = "latest"
+	}
+	if runID == "latest" {
 		result, err = findLatestResult(artifactRoot(project, ""))
+	} else if runID == "latest-failed" {
+		result, err = findLatestResultByStatus(artifactRoot(project, ""), "failed")
 	} else {
 		if !validArtifactID(runID) {
 			return "", nil, errors.New("run id must contain only lowercase letters, numbers, and hyphens")

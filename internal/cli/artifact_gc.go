@@ -263,12 +263,16 @@ func inspectArtifactRuns(root string, now time.Time) ([]artifactRun, error) {
 		if err != nil || info.Mode()&os.ModeSymlink != 0 {
 			continue
 		}
-		run := artifactRun{ID: entry.Name(), Path: path, StartedAt: info.ModTime(), SizeBytes: directoryBytes(path)}
+		run := artifactRun{ID: entry.Name(), Path: path, StartedAt: info.ModTime()}
 		if _, err := os.Stat(filepath.Join(path, ".pin")); err == nil {
 			run.Pinned = true
 		}
 		if result, err := readResult(filepath.Join(path, "result.json")); err == nil {
 			run.Status, run.StartedAt = result.Status, result.StartedAt
+			run.SizeBytes = result.Artifacts.RunBytes
+			if run.SizeBytes == 0 {
+				run.SizeBytes = directoryBytes(path)
+			}
 			runs = append(runs, run)
 			continue
 		}
@@ -277,6 +281,7 @@ func inspectArtifactRuns(root string, now time.Time) ([]artifactRun, error) {
 			continue
 		}
 		run.StartedAt = manifest.StartedAt
+		run.SizeBytes = directoryBytes(path)
 		heartbeat, heartbeatErr := os.Stat(filepath.Join(path, ".heartbeat"))
 		run.Active = heartbeatErr == nil && now.Sub(heartbeat.ModTime()) <= 15*time.Second
 		if run.Active {

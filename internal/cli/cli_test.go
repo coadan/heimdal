@@ -215,6 +215,9 @@ func TestLiveRunReportPrecedesCompletionAndDetectsStaleHeartbeat(t *testing.T) {
 	if err != nil || code != 0 || report.(RunManifest).Status != "running" {
 		t.Fatalf("live report = %#v, code %d, err %v", report, code, err)
 	}
+	if report.(RunManifest).Progress == nil || report.(RunManifest).Progress.ElapsedMS < 0 {
+		t.Fatalf("live report progress = %#v", report.(RunManifest).Progress)
+	}
 	if got := string(report.(RunManifest).Metadata["fixture"]); got != `{"port":4173}` {
 		t.Fatalf("live report metadata = %s", got)
 	}

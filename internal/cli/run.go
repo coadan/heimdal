@@ -44,6 +44,7 @@ type RunResult struct {
 	Failure        string                     `json:"failure,omitempty"`
 	ProcessError   string                     `json:"process_error,omitempty"`
 	PrimaryFailure *PrimaryFailure            `json:"primary_failure,omitempty"`
+	FailureContext string                     `json:"failure_context,omitempty"`
 	Tests          *TestCounts                `json:"tests,omitempty"`
 	Warnings       []RunWarning               `json:"warnings,omitempty"`
 	NextCommand    string                     `json:"next_command,omitempty"`
@@ -77,6 +78,14 @@ type RunManifest struct {
 	Artifacts     Artifacts                  `json:"artifacts"`
 	Metadata      map[string]json.RawMessage `json:"metadata,omitempty"`
 	MetadataError string                     `json:"metadata_error,omitempty"`
+	Progress      *RunProgress               `json:"progress,omitempty"`
+}
+
+type RunProgress struct {
+	ElapsedMS   int64  `json:"elapsed_ms"`
+	LastOutput  string `json:"last_output,omitempty"`
+	StdoutBytes int64  `json:"stdout_bytes"`
+	StderrBytes int64  `json:"stderr_bytes"`
 }
 
 type Artifacts struct {
@@ -205,7 +214,12 @@ func executeRun(ctx context.Context, project Project, options RunOptions, out, e
 			_ = cmd.Wait()
 			return RunResult{}, fmt.Errorf("write live run manifest: %w", manifestErr)
 		}
+		stopProgress := func() {}
+		if options.JSON {
+			stopProgress = startRunProgress(manifest, runDir, errOut, 15*time.Second)
+		}
 		err = cmd.Wait()
+		stopProgress()
 	}
 	finished := time.Now().UTC()
 	result := RunResult{
@@ -253,6 +267,7 @@ func executeRun(ctx context.Context, project Project, options RunOptions, out, e
 		result.MetadataError = err.Error()
 	}
 	result.Artifacts.Files = artifactFiles(runDir)
+	result.FailureContext = failureContextExcerpt(result.Artifacts.Files)
 	if result.Status == "failed" {
 		if _, traceErr := findTrace(runDir); traceErr != nil {
 			result.NextCommand = ""
@@ -268,6 +283,34 @@ func executeRun(ctx context.Context, project Project, options RunOptions, out, e
 		printResult(out, result)
 	}
 	return result, nil
+}
+
+func startRunProgress(manifest RunManifest, runDir string, out io.Writer, interval time.Duration) func() {
+	done := make(chan struct{})
+	stopped := make(chan struct{})
+	fmt.Fprintf(out, "heimdal: run %s started; poll with `heimdal report --run %s --json`\n", manifest.RunID, manifest.RunID)
+	go func() {
+		defer close(stopped)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case now := <-ticker.C:
+				progress := liveRunProgress(manifest, runDir, now.UTC())
+				fmt.Fprintf(out, "heimdal: run %s active %ds; %d log bytes", manifest.RunID, progress.ElapsedMS/1000, progress.StdoutBytes+progress.StderrBytes)
+				if progress.LastOutput != "" {
+					fmt.Fprintf(out, "; %s", progress.LastOutput)
+				}
+				fmt.Fprintln(out)
+			case <-done:
+				return
+			}
+		}
+	}()
+	return func() {
+		close(done)
+		<-stopped
+	}
 }
 
 func startRunHeartbeat(path string) (func(), error) {
@@ -397,34 +440,36 @@ func artifactFiles(root string) []string {
 }
 
 func findLatestResult(root string) (RunResult, error) {
+	return findLatestResultByStatus(root, "")
+}
+
+func findLatestResultByStatus(root, status string) (RunResult, error) {
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		return RunResult{}, fmt.Errorf("read artifact directory %s: %w", root, err)
 	}
-	type candidate struct {
-		path string
-		mod  time.Time
-	}
-	var candidates []candidate
+	var candidates []RunResult
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
 		}
-		path := filepath.Join(root, entry.Name(), "result.json")
-		info, statErr := os.Stat(path)
-		if statErr == nil {
-			candidates = append(candidates, candidate{path: path, mod: info.ModTime()})
+		result, err := readResult(filepath.Join(root, entry.Name(), "result.json"))
+		if err == nil && (status == "" || result.Status == status) {
+			candidates = append(candidates, result)
 		}
 	}
 	if len(candidates) == 0 {
-		return RunResult{}, fmt.Errorf("no Heimdal runs found in %s", root)
+		if status != "" {
+			return RunResult{}, fmt.Errorf("no %s Heimdal runs found in %s", status, root)
+		}
+		return RunResult{}, fmt.Errorf("no completed Heimdal runs found in %s", root)
 	}
-	sort.Slice(candidates, func(i, j int) bool { return candidates[i].mod.After(candidates[j].mod) })
-	return readResult(candidates[0].path)
+	sort.Slice(candidates, func(i, j int) bool { return candidates[i].StartedAt.After(candidates[j].StartedAt) })
+	return candidates[0], nil
 }
 
 func findReportRunDirectory(root, selector string) (string, error) {
-	if selector != "" && selector != "latest" {
+	if selector != "" && selector != "latest" && selector != "latest-failed" {
 		if !validArtifactID(selector) {
 			return "", fmt.Errorf("run id must contain only lowercase letters, numbers, and hyphens")
 		}
@@ -453,7 +498,13 @@ func findReportRunDirectory(root, selector string) (string, error) {
 		}
 		runDir := filepath.Join(root, entry.Name())
 		if result, resultErr := readResult(filepath.Join(runDir, "result.json")); resultErr == nil {
+			if selector == "latest-failed" && result.Status != "failed" {
+				continue
+			}
 			candidates = append(candidates, candidate{directory: runDir, startedAt: result.StartedAt})
+			continue
+		}
+		if selector == "latest-failed" {
 			continue
 		}
 		if manifest, manifestErr := readRunManifest(filepath.Join(runDir, "run.json")); manifestErr == nil {
@@ -461,6 +512,9 @@ func findReportRunDirectory(root, selector string) (string, error) {
 		}
 	}
 	if len(candidates) == 0 {
+		if selector == "latest-failed" {
+			return "", fmt.Errorf("no failed Heimdal runs found in %s", root)
+		}
 		return "", fmt.Errorf("no Heimdal runs found in %s", root)
 	}
 	sort.Slice(candidates, func(i, j int) bool {
@@ -486,8 +540,20 @@ func validArtifactID(value string) bool {
 }
 
 func readRunReport(runDir string) (any, int, error) {
+	return readRunReportDetailed(runDir, true)
+}
+
+func readRunReportDetailed(runDir string, includeFiles bool) (any, int, error) {
 	if result, err := readResult(filepath.Join(runDir, "result.json")); err == nil {
-		result.Artifacts.Files = artifactFiles(runDir)
+		if result.Tests == nil || (result.Status == "failed" && result.PrimaryFailure == nil) {
+			enrichRunResult(&result)
+		}
+		if includeFiles {
+			result.Artifacts.Files = artifactFiles(runDir)
+		}
+		if result.Status == "failed" && result.FailureContext == "" {
+			result.FailureContext = failureContextExcerptInDirectory(runDir)
+		}
 		metadata, metadataErr := allCoordinationMetadata(runDir)
 		if metadataErr != nil {
 			result.MetadataError = metadataErr.Error()
@@ -500,7 +566,11 @@ func readRunReport(runDir string) (any, int, error) {
 	if err != nil {
 		return nil, 1, err
 	}
-	manifest.Artifacts.Files = artifactFiles(runDir)
+	if includeFiles {
+		manifest.Artifacts.Files = artifactFiles(runDir)
+	}
+	progress := liveRunProgress(manifest, runDir, time.Now().UTC())
+	manifest.Progress = &progress
 	metadata, metadataErr := allCoordinationMetadata(runDir)
 	if metadataErr != nil {
 		manifest.MetadataError = metadataErr.Error()

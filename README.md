@@ -73,17 +73,32 @@ warnings, artifact sizes, and a fingerprinted primary failure when available.
 If Playwright discovers tests but executes none, Heimdal returns status
 `skipped` with a nonzero exit instead of treating the run as passing.
 `heimdal report --json` omits raw log tails and long file inventories by
-default; use `--json=full` when that retained detail is required inline.
+default, but keeps a bounded failure-context excerpt when Playwright produced
+one; use `--json=full` when the retained raw detail is required inline.
 
 Each run gets an isolated artifact directory under `.heimdal/` by default.
 The final JSON result, stdout, stderr, Playwright output, report, screenshots,
 videos, and traces remain there. While a test is still running, its live status
-is available through the same report command:
+is available through the same report command. JSON runs also emit a compact
+progress heartbeat to stderr while reserving stdout for the final JSON result:
 
 ```bash
 heimdal report --run latest --json
 heimdal trace --run latest --json
 ```
+
+Inspect retained history without filesystem searches:
+
+```bash
+heimdal runs list --status failed --since 2d
+heimdal runs show latest-failed --json
+heimdal runs compare older-run newer-run --json
+heimdal runs pin important-run
+```
+
+The inventory includes test selectors, status, timing, size, interrupted state,
+and repeated failure fingerprints. `latest-failed` also works with `report` and
+`trace`; pinned runs are protected from retention.
 
 Trace JSON resolves the retained trace without opening a viewer and returns the
 failing action, nearby actions and locators, bounded DOM snapshot excerpts,

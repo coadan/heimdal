@@ -53,6 +53,19 @@ Options:
   --help       Print this help
 `
 
+const runsUsage = `Inspect and manage Heimdal run history
+
+Usage:
+  heimdal runs list [--dir PATH] [--status STATUS] [--since AGE] [--test TEXT] [--limit N] [--json]
+  heimdal runs show SELECTOR [--dir PATH] [--json|--json=full]
+  heimdal runs compare OLD NEW [--dir PATH] [--json]
+  heimdal runs pin SELECTOR [--dir PATH] [--remove] [--json]
+
+Selectors are a run ID, latest, or latest-failed. List results include status,
+test selectors, duration, size, interruption state, and repeated failure groups.
+Pinned runs are protected from retention.
+`
+
 const metadataUsage = `Publish or read bounded run-scoped JSON metadata
 
 Usage:
@@ -125,6 +138,8 @@ func helpForCommand(command string) (string, bool) {
 		return runUsage, true
 	case "report":
 		return reportUsage, true
+	case "runs":
+		return runsUsage, true
 	case "trace":
 		return traceUsage, true
 	case "gc":

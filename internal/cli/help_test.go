@@ -8,7 +8,7 @@ import (
 )
 
 func TestEveryTopLevelCommandHasSpecificSuccessfulHelp(t *testing.T) {
-	commands := []string{"doctor", "init", "run", "list", "report", "trace", "gc", "metadata", "signal", "install", "skill", "session"}
+	commands := []string{"doctor", "init", "run", "list", "report", "runs", "trace", "gc", "metadata", "signal", "install", "skill", "session"}
 	for _, command := range commands {
 		t.Run(command, func(t *testing.T) {
 			var out strings.Builder

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bufio"
 	"crypto/sha256"
 	"fmt"
 	"os"
@@ -9,6 +10,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
+	"unicode/utf8"
 )
 
 type TestCounts struct {
@@ -69,6 +72,107 @@ func compactRunReport(report any) any {
 	default:
 		return report
 	}
+}
+
+func failureContextExcerpt(files []string) string {
+	for _, path := range files {
+		if filepath.Base(path) != "error-context.md" {
+			continue
+		}
+		file, err := os.Open(path)
+		if err != nil {
+			continue
+		}
+		scanner := bufio.NewScanner(file)
+		scanner.Buffer(make([]byte, 16*1024), 256*1024)
+		var excerpt strings.Builder
+		for scanner.Scan() && excerpt.Len() < 4000 {
+			line := strings.TrimRight(strings.ToValidUTF8(scanner.Text(), "�"), " \t")
+			if excerpt.Len() > 0 {
+				if excerpt.Len() == 4000 {
+					break
+				}
+				excerpt.WriteByte('\n')
+			}
+			remaining := 4000 - excerpt.Len()
+			line, truncated := truncateUTF8(line, remaining)
+			excerpt.WriteString(line)
+			if truncated {
+				break
+			}
+		}
+		_ = file.Close()
+		return strings.TrimSpace(excerpt.String())
+	}
+	return ""
+}
+
+func truncateUTF8(value string, limit int) (string, bool) {
+	if len(value) <= limit {
+		return value, false
+	}
+	for len(value) > limit {
+		_, width := utf8.DecodeLastRuneInString(value)
+		value = value[:len(value)-width]
+	}
+	return value, true
+}
+
+func failureContextExcerptInDirectory(root string) string {
+	var contextPath string
+	_ = filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if !entry.IsDir() && filepath.Base(path) == "error-context.md" {
+			contextPath = path
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	if contextPath == "" {
+		return ""
+	}
+	return failureContextExcerpt([]string{contextPath})
+}
+
+func liveRunProgress(manifest RunManifest, runDir string, now time.Time) RunProgress {
+	progress := RunProgress{ElapsedMS: now.Sub(manifest.StartedAt).Milliseconds()}
+	stdoutBytes, stdoutLast, stdoutModified := fileProgress(filepath.Join(runDir, "stdout.log"))
+	progress.StdoutBytes, progress.LastOutput = stdoutBytes, stdoutLast
+	stderrBytes, stderrLast, stderrModified := fileProgress(filepath.Join(runDir, "stderr.log"))
+	progress.StderrBytes = stderrBytes
+	if stderrLast != "" && (progress.LastOutput == "" || stderrModified.After(stdoutModified)) {
+		progress.LastOutput = stderrLast
+	}
+	return progress
+}
+
+func fileProgress(path string) (int64, string, time.Time) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return 0, "", time.Time{}
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return info.Size(), "", info.ModTime()
+	}
+	defer file.Close()
+	start := info.Size() - 8192
+	if start < 0 {
+		start = 0
+	}
+	if _, err := file.Seek(start, 0); err != nil {
+		return info.Size(), "", info.ModTime()
+	}
+	scanner := bufio.NewScanner(file)
+	last := ""
+	for scanner.Scan() {
+		if line := strings.TrimSpace(stripANSI(strings.ToValidUTF8(scanner.Text(), "�"))); line != "" {
+			last = line
+		}
+	}
+	return info.Size(), truncateTraceValue(last, 500), info.ModTime()
 }
 
 func enrichRunResult(result *RunResult) {

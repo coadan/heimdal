@@ -22,7 +22,9 @@ heimdal run -- tests/browser/<flow>.spec.ts --grep "<behavior>"
 Treat only `passed` as passing evidence. Heimdal reports `skipped` with a
 nonzero exit when Playwright discovers tests but executes none. Run and report
 JSON expose structured test counts, a primary failure fingerprint, deduplicated
-warnings, and artifact sizes; use those fields before reading log tails.
+warnings, artifact sizes, and a bounded Playwright failure-context excerpt; use
+those fields before reading log tails. A long JSON run emits progress on stderr,
+and `report --run ID --json` can be polled for structured live progress.
 
 Use one persistent session for exploration:
 
@@ -103,6 +105,19 @@ Trace inspection is non-mutating and returns the failing action, nearby
 locators, bounded DOM excerpts, and artifact paths without opening a viewer.
 Inspect raw artifacts only when these summaries point to them. Never put
 secrets in commands, screenshots, traces, metadata, or generated tests.
+
+Use the indexed history before scanning `.heimdal` directly:
+
+```bash
+heimdal runs list --status failed --since 2d --json
+heimdal runs show latest-failed --json
+heimdal runs compare <old-run> <new-run> --json
+heimdal runs pin <run-id>
+```
+
+Repeated failures are grouped by fingerprint. Use `latest-failed` with report
+or trace when diagnosing the newest failure. Pin only evidence that must outlive
+normal retention, then unpin it with `runs pin <run-id> --remove`.
 
 Use `heimdal gc --dry-run` before manual artifact cleanup. Retention preserves
 pins, active runs, recent runs, and the configured number of failures; do not

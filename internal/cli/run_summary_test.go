@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRunAnalysisExtractsCountsFailureWarningsAndFingerprint(t *testing.T) {
@@ -100,6 +101,30 @@ func TestDirectoryBytesIgnoresDirectories(t *testing.T) {
 	}
 	if got := directoryBytes(root); got != 5 {
 		t.Fatalf("directory bytes = %d, want 5", got)
+	}
+}
+
+func TestFailureContextAndLiveProgressStayBounded(t *testing.T) {
+	runDir := t.TempDir()
+	contextPath := filepath.Join(runDir, "error-context.md")
+	context := "# Page snapshot\n\n" + strings.Repeat("visible accessible content ✓\n", 300)
+	if err := os.WriteFile(contextPath, []byte(context), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runDir, "stdout.log"), []byte("starting\ncheckpoint reached\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runDir, "stderr.log"), []byte("warning\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	excerpt := failureContextExcerpt([]string{contextPath})
+	if !strings.Contains(excerpt, "Page snapshot") || len(excerpt) > 4000 || strings.ToValidUTF8(excerpt, "") != excerpt {
+		t.Fatalf("failure context length=%d, contents=%q", len(excerpt), excerpt)
+	}
+	started := time.Now().UTC().Add(-2 * time.Second)
+	progress := liveRunProgress(RunManifest{StartedAt: started}, runDir, started.Add(2*time.Second))
+	if progress.ElapsedMS != 2000 || progress.LastOutput != "warning" || progress.StdoutBytes == 0 || progress.StderrBytes == 0 {
+		t.Fatalf("progress = %#v", progress)
 	}
 }
 
