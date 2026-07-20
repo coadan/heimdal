@@ -361,11 +361,12 @@ func TestWriteAgentCLIConfig(t *testing.T) {
 	}
 }
 
-func TestNormalizeGeneratedLocator(t *testing.T) {
-	if got := normalizeGeneratedLocator("Locator: page.getByRole('button', { name: 'Save' })\n"); got != "page.getByRole('button', { name: 'Save' })" {
+func TestLocatorFromPlaywrightAction(t *testing.T) {
+	output := "### Ran Playwright code\n```js\nawait page.getByRole('button', { name: 'Save' }).click();\n```\n"
+	if got := locatorFromPlaywrightAction(output, "click"); got != "page.getByRole('button', { name: 'Save' })" {
 		t.Fatalf("locator = %q", got)
 	}
-	if got := normalizeGeneratedLocator("[Snapshot](.dev/heimdal/page.yml)\n"); got != "" {
+	if got := locatorFromPlaywrightAction("[Snapshot](.dev/heimdal/page.yml)\n", "click"); got != "" {
 		t.Fatalf("snapshot path was accepted as locator: %q", got)
 	}
 }
@@ -384,10 +385,10 @@ func TestSessionActionsReobserveStateChanges(t *testing.T) {
 }
 
 func TestSessionSnapshotArgsBoundDefaultOutput(t *testing.T) {
-	if got, want := strings.Join(sessionSnapshotArgs(false, false, nil), " "), "snapshot --depth=5"; got != want {
+	if got, want := strings.Join(sessionSnapshotArgs(false, false, nil), " "), "snapshot"; got != want {
 		t.Fatalf("default snapshot args = %q, want %q", got, want)
 	}
-	if got, want := strings.Join(sessionSnapshotArgs(true, false, nil), " "), "snapshot --boxes --depth=5"; got != want {
+	if got, want := strings.Join(sessionSnapshotArgs(true, false, nil), " "), "snapshot --boxes"; got != want {
 		t.Fatalf("boxed snapshot args = %q, want %q", got, want)
 	}
 	if got, want := strings.Join(sessionSnapshotArgs(false, true, nil), " "), "snapshot"; got != want {
@@ -535,7 +536,8 @@ func TestStartSessionUsesPersistentAgentCLIState(t *testing.T) {
 		t.Fatal(err)
 	}
 	runner := filepath.Join(root, "fake-playwright-cli")
-	runnerScript := "#!/bin/sh\ncase \"$*\" in\n  *generate-locator*) printf '%s\\n' 'Locator: page.getByRole(\"button\")' ;;\n  *) printf '%s\\n' '- [Snapshot](" + filepath.ToSlash(snapshotRelative) + ")' ;;\nesac\n"
+	calls := filepath.Join(root, "runner-calls.log")
+	runnerScript := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '" + calls + "'\ncase \"$*\" in\n  *click*) printf '%s\\n' '### Ran Playwright code' '```js' 'await page.getByRole(\"button\").click();' '```' '### Snapshot' '- [Snapshot](" + filepath.ToSlash(snapshotRelative) + ")' ;;\n  *) printf '%s\\n' '- [Snapshot](" + filepath.ToSlash(snapshotRelative) + ")' ;;\nesac\n"
 	if err := os.WriteFile(runner, []byte(runnerScript), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -565,8 +567,9 @@ func TestStartSessionUsesPersistentAgentCLIState(t *testing.T) {
 	if _, err := os.Stat(state.CLIConfig); err != nil {
 		t.Fatalf("missing CLI config: %v", err)
 	}
-	if _, err := runSessionCommand(context.Background(), project, &state, statePath, []string{"click", "e2"}, "page.getByRole('button', { name: 'Save' })"); err != nil {
-		t.Fatal(err)
+	response := executeSessionAction(context.Background(), project, &state, statePath, "click", SessionOptions{Forwarded: []string{"e2"}})
+	if response.Status != "passed" {
+		t.Fatalf("click response = %#v", response)
 	}
 	if state.ActionCount != 2 {
 		t.Fatalf("action count = %d, want 2", state.ActionCount)
@@ -577,6 +580,16 @@ func TestStartSessionUsesPersistentAgentCLIState(t *testing.T) {
 	}
 	if len(actions) != 2 || actions[1].Locator == "" {
 		t.Fatalf("unexpected actions: %#v", actions)
+	}
+	invocations, err := os.ReadFile(calls)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(strings.Split(strings.TrimSpace(string(invocations)), "\n")); got != 2 {
+		t.Fatalf("runner invocations = %d, want open + click only:\n%s", got, invocations)
+	}
+	if strings.Contains(string(invocations), "generate-locator") {
+		t.Fatalf("single-pass action invoked generate-locator:\n%s", invocations)
 	}
 }
 

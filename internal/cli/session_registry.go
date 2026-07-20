@@ -39,12 +39,16 @@ func sessionIndexPath(state SessionState) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	name := sanitize(state.Name)
+	return sessionIndexPathForRoot(directory, state.Name, state.Root), nil
+}
+
+func sessionIndexPathForRoot(directory, name, root string) string {
+	name = sanitize(name)
 	if name == "" {
 		name = defaultSessionName
 	}
-	hash := sha256.Sum256([]byte(filepath.Clean(state.Root)))
-	return filepath.Join(directory, fmt.Sprintf("%s-%x.json", name, hash[:8])), nil
+	hash := sha256.Sum256([]byte(filepath.Clean(root)))
+	return filepath.Join(directory, fmt.Sprintf("%s-%x.json", name, hash[:8]))
 }
 
 func writeSessionIndex(state SessionState) error {
@@ -117,26 +121,39 @@ func readSessionIndexes(name string) ([]sessionIndex, error) {
 }
 
 func discoverSession(options SessionOptions) (Project, SessionState, string, error) {
-	if options.Root != "" {
-		project, err := Discover(options.Root)
-		if err != nil {
-			return Project{}, SessionState{}, "", err
+	start := options.Root
+	if start == "" {
+		start = "."
+	}
+	if absolute, absoluteErr := filepath.Abs(start); absoluteErr == nil {
+		if info, statErr := os.Stat(absolute); statErr == nil && !info.IsDir() {
+			absolute = filepath.Dir(absolute)
 		}
-		state, path, err := loadSession(project, options)
-		return project, state, path, err
+		if index, ok, indexErr := sessionIndexFromPath(options.Name, absolute); indexErr != nil {
+			return Project{}, SessionState{}, "", indexErr
+		} else if ok {
+			return loadIndexedSession(index)
+		}
 	}
 
-	// Prefer the current worktree when the agent is already inside it.
-	if project, err := Discover(""); err == nil {
-		if state, path, loadErr := loadSession(project, options); loadErr == nil {
-			return project, state, path, nil
+	if options.Root != "" {
+		project, discoverErr := Discover(options.Root)
+		if discoverErr != nil {
+			return Project{}, SessionState{}, "", discoverErr
 		}
+		state, path, loadErr := loadSession(project, options)
+		if loadErr == nil {
+			refreshSessionProjectCache(&state, project)
+			_ = writeSessionState(path, state)
+		}
+		return project, state, path, loadErr
 	}
 
 	indexes, err := readSessionIndexes(options.Name)
 	if err != nil {
 		return Project{}, SessionState{}, "", err
 	}
+
 	if len(indexes) == 0 {
 		name := sanitize(options.Name)
 		if name == "" {
@@ -151,14 +168,105 @@ func discoverSession(options SessionOptions) (Project, SessionState, string, err
 		}
 		return Project{}, SessionState{}, "", fmt.Errorf("session %q exists in multiple worktrees (%s); pass --dir", indexes[0].Name, strings.Join(roots, ", "))
 	}
-	index := indexes[0]
-	project, err := Discover(index.Root)
+	return loadIndexedSession(indexes[0])
+}
+
+func sessionIndexFromPath(name, start string) (sessionIndex, bool, error) {
+	directory, err := sessionRegistryDirectory()
 	if err != nil {
-		return Project{}, SessionState{}, "", err
+		return sessionIndex{}, false, err
 	}
+	for current := filepath.Clean(start); ; current = filepath.Dir(current) {
+		path := sessionIndexPathForRoot(directory, name, current)
+		contents, readErr := os.ReadFile(path)
+		if readErr == nil {
+			var index sessionIndex
+			if json.Unmarshal(contents, &index) == nil && index.Name == normalizedSessionName(name) && filepath.Clean(index.Root) == current {
+				if _, stateErr := os.Stat(index.StatePath); stateErr == nil {
+					return index, true, nil
+				}
+			}
+		} else if !errors.Is(readErr, os.ErrNotExist) {
+			return sessionIndex{}, false, fmt.Errorf("read Heimdal session index: %w", readErr)
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			break
+		}
+	}
+	return sessionIndex{}, false, nil
+}
+
+func normalizedSessionName(name string) string {
+	name = sanitize(name)
+	if name == "" {
+		return defaultSessionName
+	}
+	return name
+}
+
+func loadIndexedSession(index sessionIndex) (Project, SessionState, string, error) {
 	state, err := readSessionState(index.StatePath)
 	if err != nil {
 		return Project{}, SessionState{}, index.StatePath, fmt.Errorf("read session %q: %w", index.Name, err)
 	}
+	if project, ok, cacheErr := cachedSessionProject(state); cacheErr != nil {
+		return Project{}, SessionState{}, index.StatePath, cacheErr
+	} else if ok {
+		return project, state, index.StatePath, nil
+	}
+	project, err := Discover(index.Root)
+	if err != nil {
+		return Project{}, SessionState{}, index.StatePath, err
+	}
+	refreshSessionProjectCache(&state, project)
+	if err := writeSessionState(index.StatePath, state); err != nil {
+		return Project{}, SessionState{}, index.StatePath, err
+	}
 	return project, state, index.StatePath, nil
+}
+
+func refreshSessionProjectCache(state *SessionState, project Project) {
+	configFile := project.ConfigFile
+	if configFile == "" {
+		configFile = filepath.Join(project.Root, configFileName)
+	}
+	state.ProjectCache = &SessionProjectCache{
+		ConfigFile:  configFile,
+		ConfigStamp: sessionFileStamp(configFile),
+		AgentRunner: append([]string(nil), project.AgentRunner...),
+	}
+}
+
+func cachedSessionProject(state SessionState) (Project, bool, error) {
+	cache := state.ProjectCache
+	if cache == nil || len(cache.AgentRunner) == 0 {
+		return Project{}, false, nil
+	}
+	stamp := sessionFileStamp(cache.ConfigFile)
+	if stamp == "error" || cache.ConfigStamp != stamp {
+		return Project{}, false, nil
+	}
+	config, configFile, err := loadConfig(state.Root, "")
+	if err != nil {
+		return Project{}, false, err
+	}
+	return Project{
+		Root:        state.Root,
+		Branch:      state.Branch,
+		Config:      config,
+		ConfigFile:  configFile,
+		AgentRunner: append([]string(nil), cache.AgentRunner...),
+	}, true, nil
+}
+
+func sessionFileStamp(path string) string {
+	info, err := os.Stat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return "missing"
+	}
+	if err != nil {
+		return "error"
+	}
+	return fmt.Sprintf("%d:%d", info.Size(), info.ModTime().UnixNano())
 }

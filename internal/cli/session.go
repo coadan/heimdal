@@ -19,10 +19,9 @@ import (
 )
 
 const (
-	sessionStateVersion  = 1
-	defaultSessionName   = "default"
-	defaultServerWait    = 45 * time.Second
-	defaultSnapshotDepth = 5
+	sessionStateVersion = 1
+	defaultSessionName  = "default"
+	defaultServerWait   = 45 * time.Second
 )
 
 type SessionOptions struct {
@@ -40,29 +39,39 @@ type SessionOptions struct {
 	NoServer   bool
 	Force      bool
 	Boxes      bool
+	Full       bool
 	Verbose    bool
+	FullJSON   bool
 	Timeout    time.Duration
 	Forwarded  []string
 }
 
+type SessionProjectCache struct {
+	ConfigFile  string   `json:"config_file,omitempty"`
+	ConfigStamp string   `json:"config_stamp"`
+	AgentRunner []string `json:"agent_runner"`
+}
+
 type SessionState struct {
-	SchemaVersion int        `json:"schema_version"`
-	Name          string     `json:"name"`
-	RunID         string     `json:"run_id"`
-	Root          string     `json:"root"`
-	Branch        string     `json:"branch"`
-	SessionDir    string     `json:"session_dir"`
-	CLIConfig     string     `json:"cli_config"`
-	ActionLog     string     `json:"action_log"`
-	URL           string     `json:"url,omitempty"`
-	Port          int        `json:"port,omitempty"`
-	ServerPID     int        `json:"server_pid,omitempty"`
-	ServerCommand []string   `json:"server_command,omitempty"`
-	ServerStdout  string     `json:"server_stdout,omitempty"`
-	ServerStderr  string     `json:"server_stderr,omitempty"`
-	ActionCount   int        `json:"action_count"`
-	StartedAt     time.Time  `json:"started_at"`
-	StoppedAt     *time.Time `json:"stopped_at,omitempty"`
+	SchemaVersion int                  `json:"schema_version"`
+	Name          string               `json:"name"`
+	RunID         string               `json:"run_id"`
+	Root          string               `json:"root"`
+	Branch        string               `json:"branch"`
+	SessionDir    string               `json:"session_dir"`
+	CLIConfig     string               `json:"cli_config"`
+	ActionLog     string               `json:"action_log"`
+	URL           string               `json:"url,omitempty"`
+	Port          int                  `json:"port,omitempty"`
+	ServerPID     int                  `json:"server_pid,omitempty"`
+	ServerCommand []string             `json:"server_command,omitempty"`
+	ServerStdout  string               `json:"server_stdout,omitempty"`
+	ServerStderr  string               `json:"server_stderr,omitempty"`
+	ActionCount   int                  `json:"action_count"`
+	LastSnapshot  string               `json:"last_snapshot,omitempty"`
+	ProjectCache  *SessionProjectCache `json:"project_cache,omitempty"`
+	StartedAt     time.Time            `json:"started_at"`
+	StoppedAt     *time.Time           `json:"stopped_at,omitempty"`
 }
 
 type SessionActionRecord struct {
@@ -85,31 +94,40 @@ type sessionCommandResult struct {
 	ExitCode  int
 	Sequence  int
 	StartedAt time.Time
+	Locator   string
 }
 
 type SessionResponse struct {
-	SchemaVersion int               `json:"schema_version"`
-	Status        string            `json:"status"`
-	Session       string            `json:"session"`
-	RunID         string            `json:"run_id,omitempty"`
-	Root          string            `json:"root,omitempty"`
-	URL           string            `json:"url,omitempty"`
-	Port          int               `json:"port,omitempty"`
-	Action        int               `json:"action,omitempty"`
-	Command       []string          `json:"command,omitempty"`
-	Output        string            `json:"output,omitempty"`
-	Snapshot      string            `json:"snapshot,omitempty"`
-	Stderr        string            `json:"stderr,omitempty"`
-	Error         string            `json:"error,omitempty"`
-	Issues        []string          `json:"issues,omitempty"`
-	Server        string            `json:"server,omitempty"`
-	Artifacts     map[string]string `json:"artifacts,omitempty"`
-	State         *SessionState     `json:"state,omitempty"`
+	SchemaVersion   int               `json:"schema_version"`
+	Status          string            `json:"status"`
+	Session         string            `json:"session"`
+	RunID           string            `json:"run_id,omitempty"`
+	Root            string            `json:"root,omitempty"`
+	URL             string            `json:"url,omitempty"`
+	Port            int               `json:"port,omitempty"`
+	Action          int               `json:"action,omitempty"`
+	Command         []string          `json:"command,omitempty"`
+	Output          string            `json:"output,omitempty"`
+	Snapshot        string            `json:"snapshot,omitempty"`
+	SnapshotMode    string            `json:"snapshot_mode,omitempty"`
+	SnapshotOmitted int               `json:"snapshot_omitted,omitempty"`
+	Stderr          string            `json:"stderr,omitempty"`
+	Error           string            `json:"error,omitempty"`
+	Issues          []string          `json:"issues,omitempty"`
+	Server          string            `json:"server,omitempty"`
+	Artifacts       map[string]string `json:"artifacts,omitempty"`
+	State           *SessionState     `json:"state,omitempty"`
+	CompactJSON     bool              `json:"-"`
 }
 
 type sessionSaveOptions struct {
 	SessionOptions
 	TestPath string
+}
+
+type sessionBatchOptions struct {
+	SessionOptions
+	File string
 }
 
 type agentCLIConfig struct {
@@ -153,6 +171,8 @@ func runSession(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return runSessionAction(ctx, "screenshot", args[1:], out, errOut)
 	case "diagnose":
 		return runSessionDiagnose(ctx, args[1:], out, errOut)
+	case "batch":
+		return runSessionBatch(ctx, args[1:], out, errOut)
 	case "save":
 		return runSessionSave(args[1:], out, errOut)
 	default:
@@ -169,6 +189,7 @@ Usage:
   heimdal session observe [options] [-- PLAYWRIGHT_CLI_ARGS...]
   heimdal session screenshot [options] [-- PLAYWRIGHT_CLI_ARGS...]
   heimdal session diagnose [options]
+  heimdal session batch --file FILE|- [options]
   heimdal session save [options]
   heimdal session <PLAYWRIGHT_CLI_COMMAND> [options]
 
@@ -185,16 +206,19 @@ Start options:
   --browser NAME   Playwright browser engine/channel
   --no-server      Skip the configured session.command
   --boxes          Include bounding boxes in snapshots for coordinate work
+  --full           Return a full semantic snapshot instead of a delta
   --no-boxes       Compatibility alias for the default semantic snapshots
   --verbose        Include full Playwright CLI output; default output is compact
   --force          Replace existing Heimdal session state
   --json           Print only agent-readable JSON
+  --json=full      Include repeated session metadata in JSON actions
 
 Examples:
   heimdal session start --name qa --headed
   heimdal session observe
   heimdal session click e12
   heimdal session fill e5 "hello"
+  heimdal session batch --file ./browser-steps.json
   heimdal session diagnose --json
   heimdal session save --test tests/browser/exploration.spec.ts
 `
@@ -265,6 +289,7 @@ func startSession(ctx context.Context, project Project, options SessionOptions, 
 		ServerCommand: serverCommand,
 		StartedAt:     started,
 	}
+	refreshSessionProjectCache(&state, project)
 	if err := writeAgentCLIConfig(state.CLIConfig, options, project.Config.Session); err != nil {
 		return reportError(options.JSON, err, out, errOut)
 	}
@@ -337,9 +362,11 @@ func startSession(ctx context.Context, project Project, options SessionOptions, 
 	if options.Verbose || options.Boxes || !reusedSnapshot {
 		observeArgs := sessionSnapshotArgs(options.Boxes, options.Verbose, nil)
 		observe, observeErr = runSessionCommandMode(ctx, project, &state, statePath, observeArgs, "", !options.Verbose)
-		if !options.Verbose {
-			snapshot = compactSessionSnapshot(observe.Stdout)
-		}
+		snapshot, _ = sessionSnapshotPayload(project, state, observe.Stdout)
+	}
+	view, snapshotErr := storeSessionSnapshot(&state, statePath, observe.Sequence, snapshot, false, options.Full, "")
+	if observeErr == nil && snapshotErr != nil {
+		observeErr = snapshotErr
 	}
 	if observeErr != nil {
 		stopSessionResources(ctx, project, state)
@@ -351,7 +378,9 @@ func startSession(ctx context.Context, project Project, options SessionOptions, 
 		response.Output = joinOutputs(open.Stdout, observe.Stdout)
 	} else {
 		response.Output = fmt.Sprintf("opened %s", state.URL)
-		response.Snapshot = snapshot
+		response.Snapshot = view.Text
+		response.SnapshotMode = view.Mode
+		response.SnapshotOmitted = view.Omitted
 	}
 	if observeErr != nil {
 		response.Status = "failed"
@@ -374,6 +403,7 @@ func runSessionStop(ctx context.Context, args []string, out, errOut io.Writer) i
 	if state.StoppedAt != nil {
 		response := sessionResponse(state, sessionCommandResult{}, nil)
 		response.Status = "stopped"
+		response.CompactJSON = !options.FullJSON
 		return printSessionResponse(out, errOut, response, options.JSON)
 	}
 	closeResult, closeErr := runSessionCommand(ctx, project, &state, statePath, []string{"close"}, "")
@@ -384,6 +414,7 @@ func runSessionStop(ctx context.Context, args []string, out, errOut io.Writer) i
 	indexWriteErr := writeSessionIndex(state)
 	response := sessionResponse(state, closeResult, closeErr)
 	response.Status = "stopped"
+	response.CompactJSON = !options.FullJSON
 	if !options.Verbose {
 		response.Output = compactSessionCommand(closeResult, "")
 		response.Stderr = compactCLIOutput(closeResult.Stderr)
@@ -438,58 +469,82 @@ func runSessionAction(ctx context.Context, action string, args []string, out, er
 	if state.StoppedAt != nil {
 		return reportError(options.JSON, fmt.Errorf("session %q is stopped", state.Name), out, errOut)
 	}
+	response := executeSessionAction(ctx, project, &state, statePath, action, options)
+	return printSessionResponse(out, errOut, response, options.JSON)
+}
 
+func executeSessionAction(ctx context.Context, project Project, state *SessionState, statePath, action string, options SessionOptions) SessionResponse {
 	logicalArgs := append([]string{action}, options.Forwarded...)
 	if action == "snapshot" {
 		logicalArgs = sessionSnapshotArgs(options.Boxes, options.Verbose, options.Forwarded)
 	}
-	locator := ""
-	if isLocatorAction(action, logicalArgs) {
-		locator = generateSessionLocator(ctx, project, state, logicalArgs[1])
-	}
-	result, commandErr := runSessionCommandMode(ctx, project, &state, statePath, logicalArgs, locator, !options.Verbose)
+	captureLocator := isLocatorAction(action, logicalArgs)
+	result, commandErr := runSessionCommandMode(ctx, project, state, statePath, logicalArgs, "", !options.Verbose && !captureLocator)
 	output := result.Stdout
 	stderr := result.Stderr
 	var snapshot string
+	snapshotSequence := result.Sequence
+	var view snapshotPresentation
 	if commandErr == nil && shouldObserveAfterSessionAction(action) {
 		reusedSnapshot := false
 		if !options.Verbose && !options.Boxes {
-			snapshot, reusedSnapshot = emittedSessionSnapshot(project, state, result.Stdout)
+			snapshot, reusedSnapshot = emittedSessionSnapshot(project, *state, result.Stdout)
 		}
 		if !reusedSnapshot {
 			observationArgs := sessionSnapshotArgs(options.Boxes, options.Verbose, nil)
-			observation, observationErr := runSessionCommandMode(ctx, project, &state, statePath, observationArgs, "", !options.Verbose)
+			observation, observationErr := runSessionCommandMode(ctx, project, state, statePath, observationArgs, "", !options.Verbose)
+			snapshotSequence = observation.Sequence
 			if options.Verbose {
 				output = joinOutputs(output, observation.Stdout)
-			} else {
-				snapshot = compactSessionSnapshot(observation.Stdout)
 			}
+			snapshot, _ = sessionSnapshotPayload(project, *state, observation.Stdout)
 			stderr = joinOutputs(stderr, observation.Stderr)
 			if observationErr != nil {
 				commandErr = fmt.Errorf("post-action observation failed: %w", observationErr)
 			}
 		}
+		if commandErr == nil {
+			target := ""
+			if isLocatorAction(action, logicalArgs) {
+				target = logicalArgs[1]
+			}
+			allowDelta := !options.Boxes && !snapshotResetsSessionContext(action)
+			view, commandErr = storeSessionSnapshot(state, statePath, snapshotSequence, snapshot, allowDelta, options.Full, target)
+		}
 	}
-	response := sessionResponse(state, result, commandErr)
+	if action == "snapshot" && !options.Verbose {
+		var snapshotErr error
+		view, snapshotErr = storeSessionSnapshot(state, statePath, result.Sequence, result.Stdout, false, options.Full, "")
+		if snapshotErr != nil && commandErr == nil {
+			commandErr = snapshotErr
+		}
+	}
+	response := sessionResponse(*state, result, commandErr)
+	response.CompactJSON = !options.FullJSON
 	if options.Verbose {
 		response.Output = output
 		response.Stderr = stderr
 	} else {
 		response.Command = compactSessionArgs(result.Args)
-		response.Output = compactSessionCommand(result, locator)
-		response.Snapshot = snapshot
+		response.Output = compactSessionCommand(result, result.Locator)
+		response.Snapshot = view.Text
+		response.SnapshotMode = view.Mode
+		response.SnapshotOmitted = view.Omitted
 		response.Stderr = compactCLIOutput(stderr)
 	}
 	if action == "snapshot" && !options.Verbose {
 		response.Output = "observed"
-		response.Snapshot = compactSessionSnapshot(result.Stdout)
+		response.Snapshot = view.Text
+		response.SnapshotMode = view.Mode
+		response.SnapshotOmitted = view.Omitted
 	}
 	if commandErr != nil {
 		response.Status = "failed"
+		response.Error = commandErr.Error()
 	} else if response.Status != "issues" {
 		response.Status = "passed"
 	}
-	return printSessionResponse(out, errOut, response, options.JSON)
+	return response
 }
 
 func runSessionDiagnose(ctx context.Context, args []string, out, errOut io.Writer) int {
@@ -511,6 +566,7 @@ func runSessionDiagnose(ctx context.Context, args []string, out, errOut io.Write
 	commands := [][]string{{"console", "error"}, {"requests"}, sessionSnapshotArgs(options.Boxes, options.Verbose, nil)}
 	var output []string
 	var snapshot string
+	var snapshotResult sessionCommandResult
 	var last sessionCommandResult
 	var firstErr error
 	var diagnosticOutput []string
@@ -522,6 +578,7 @@ func runSessionDiagnose(ctx context.Context, args []string, out, errOut io.Write
 		}
 		if command[0] == "snapshot" && !options.Verbose {
 			snapshot = result.Stdout
+			snapshotResult = result
 			continue
 		}
 		diagnosticOutput = append(diagnosticOutput, result.Stdout, result.Stderr)
@@ -531,10 +588,23 @@ func runSessionDiagnose(ctx context.Context, args []string, out, errOut io.Write
 			output = append(output, compactDiagnostic(command, result))
 		}
 	}
+	var view snapshotPresentation
+	if snapshot != "" {
+		var snapshotErr error
+		view, snapshotErr = storeSessionSnapshot(&state, statePath, snapshotResult.Sequence, snapshot, false, options.Full, "")
+		if firstErr == nil && snapshotErr != nil {
+			firstErr = snapshotErr
+		}
+	}
 	response := sessionResponse(state, last, firstErr)
+	response.CompactJSON = !options.FullJSON
 	response.Command = []string{"diagnose"}
 	response.Output = strings.TrimSpace(strings.Join(output, "\n\n"))
-	response.Snapshot = snapshot
+	if snapshot != "" {
+		response.Snapshot = view.Text
+		response.SnapshotMode = view.Mode
+		response.SnapshotOmitted = view.Omitted
+	}
 	response.Issues = append(response.Issues, diagnosticIssues(diagnosticOutput...)...)
 	if firstErr != nil {
 		response.Status = "failed"
@@ -658,6 +728,8 @@ func parseSessionOptions(args []string) (SessionOptions, error) {
 			options.Boxes = true
 		case "--no-boxes":
 			options.Boxes = false
+		case "--full":
+			options.Full = true
 		case "--verbose":
 			options.Verbose = true
 		case "--timeout-ms":
@@ -672,6 +744,9 @@ func parseSessionOptions(args []string) (SessionOptions, error) {
 			i, options.Timeout = next, time.Duration(milliseconds)*time.Millisecond
 		case "--json":
 			options.JSON = true
+		case "--json=full":
+			options.JSON = true
+			options.FullJSON = true
 		case "--help", "-h":
 			return options, errors.New(sessionUsage)
 		default:
@@ -736,9 +811,6 @@ func sessionSnapshotArgs(boxes, verbose bool, forwarded []string) []string {
 			args = append(args, "--boxes")
 		}
 	}
-	if !verbose && !containsFlag(forwarded, "--depth") {
-		args = append(args, fmt.Sprintf("--depth=%d", defaultSnapshotDepth))
-	}
 	return args
 }
 
@@ -770,21 +842,33 @@ func emittedSessionSnapshot(project Project, state SessionState, output string) 
 		if err != nil {
 			continue
 		}
-		return compactSessionSnapshot(string(contents)), true
+		return strings.TrimSpace(string(contents)), true
+	}
+	return "", false
+}
+
+func sessionSnapshotPayload(project Project, state SessionState, output string) (string, bool) {
+	if snapshot, ok := emittedSessionSnapshot(project, state, output); ok {
+		return snapshot, true
+	}
+	const fence = "```yaml"
+	if start := strings.Index(output, fence); start >= 0 {
+		value := output[start+len(fence):]
+		if end := strings.Index(value, "```"); end >= 0 {
+			if snapshot := strings.TrimSpace(value[:end]); snapshot != "" {
+				return snapshot, true
+			}
+		}
+	}
+	trimmed := strings.TrimSpace(output)
+	if strings.HasPrefix(trimmed, "-") {
+		return trimmed, true
 	}
 	return "", false
 }
 
 func compactSessionSnapshot(snapshot string) string {
-	lines := strings.Split(strings.TrimSpace(snapshot), "\n")
-	kept := lines[:0]
-	for _, line := range lines {
-		indent := len(line) - len(strings.TrimLeft(line, " "))
-		if indent/2 <= defaultSnapshotDepth {
-			kept = append(kept, line)
-		}
-	}
-	return truncateDisplay(strings.Join(kept, "\n"), 16*1024)
+	return semanticSnapshot(snapshot).Text
 }
 
 func sessionTemplateValues(project Project, name, runID, runDir string, port int, configuredURL string) map[string]string {
@@ -922,6 +1006,9 @@ func runSessionCommandMode(ctx context.Context, project Project, state *SessionS
 			exitCode = 1
 		}
 	}
+	if locator == "" && len(logicalArgs) > 0 && isLocatorAction(logicalArgs[0], logicalArgs) {
+		locator = locatorFromPlaywrightAction(stdout.String(), logicalArgs[0])
+	}
 	state.ActionCount++
 	sequence := state.ActionCount
 	prefix := fmt.Sprintf("action-%04d", sequence)
@@ -959,39 +1046,27 @@ func runSessionCommandMode(ctx context.Context, project Project, state *SessionS
 	if exitCode != 0 && err == nil {
 		err = fmt.Errorf("Playwright CLI exited with code %d", exitCode)
 	}
-	return sessionCommandResult{Args: logicalArgs, Stdout: stdout.String(), Stderr: stderr.String(), ExitCode: exitCode, Sequence: sequence, StartedAt: started}, err
+	return sessionCommandResult{Args: logicalArgs, Stdout: stdout.String(), Stderr: stderr.String(), ExitCode: exitCode, Sequence: sequence, StartedAt: started, Locator: locator}, err
 }
 
-func generateSessionLocator(ctx context.Context, project Project, state SessionState, target string) string {
-	if target == "" {
+func locatorFromPlaywrightAction(output, action string) string {
+	method := map[string]string{
+		"click": "click", "dblclick": "dblclick", "fill": "fill", "select": "selectOption",
+		"check": "check", "uncheck": "uncheck", "hover": "hover", "highlight": "highlight",
+		"screenshot": "screenshot",
+	}[action]
+	if method == "" {
 		return ""
 	}
-	command := append([]string(nil), project.AgentRunner...)
-	command = append(command, "--raw", "-s="+state.Name, "generate-locator", target)
-	cmd := exec.CommandContext(ctx, command[0], command[1:]...)
-	cmd.Dir = project.Root
-	cmd.Env = sessionEnvironment(project, state)
-	output, err := cmd.Output()
-	if err != nil {
-		return ""
-	}
-	return normalizeGeneratedLocator(string(output))
-}
-
-func normalizeGeneratedLocator(output string) string {
-	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+	needle := "." + method + "("
+	for _, line := range strings.Split(output, "\n") {
 		line = strings.TrimSpace(line)
-		if line == "" {
+		if !strings.HasPrefix(line, "await page.") {
 			continue
 		}
-		if index := strings.Index(line, "page."); index >= 0 {
-			locator := strings.TrimSpace(line[index:])
-			if strings.Contains(locator, "(") {
-				return locator
-			}
-		}
-		if strings.HasPrefix(line, "getBy") {
-			return "page." + line
+		line = strings.TrimPrefix(line, "await ")
+		if index := strings.LastIndex(line, needle); index > 0 {
+			return strings.TrimSpace(line[:index])
 		}
 	}
 	return ""
@@ -1189,6 +1264,9 @@ func sessionResponse(state SessionState, result sessionCommandResult, commandErr
 		response.Status = "issues"
 		response.Issues = append(response.Issues, "fixture process is not running")
 	}
+	if state.LastSnapshot != "" {
+		response.Artifacts["latest_snapshot"] = state.LastSnapshot
+	}
 	return response
 }
 
@@ -1357,7 +1435,11 @@ func truncateDisplay(value string, max int) string {
 
 func printSessionResponse(out, errOut io.Writer, response SessionResponse, asJSON bool) int {
 	if asJSON {
-		if err := writeJSONTo(out, response); err != nil {
+		printed := response
+		if response.CompactJSON {
+			printed = compactSessionResponse(response)
+		}
+		if err := writeJSONTo(out, printed); err != nil {
 			fmt.Fprintln(errOut, "heimdal:", err)
 			return 1
 		}
@@ -1407,6 +1489,23 @@ func printSessionResponse(out, errOut io.Writer, response SessionResponse, asJSO
 		return 1
 	}
 	return 0
+}
+
+func compactSessionResponse(response SessionResponse) SessionResponse {
+	return SessionResponse{
+		SchemaVersion:   response.SchemaVersion,
+		Status:          response.Status,
+		Session:         response.Session,
+		Action:          response.Action,
+		Command:         response.Command,
+		Output:          response.Output,
+		Snapshot:        response.Snapshot,
+		SnapshotMode:    response.SnapshotMode,
+		SnapshotOmitted: response.SnapshotOmitted,
+		Stderr:          response.Stderr,
+		Error:           response.Error,
+		Issues:          response.Issues,
+	}
 }
 
 func sessionMarkdown(state SessionState, actions []SessionActionRecord) string {
@@ -1504,6 +1603,15 @@ func sessionActionTestLines(action SessionActionRecord) []string {
 func shouldObserveAfterSessionAction(action string) bool {
 	switch action {
 	case "click", "dblclick", "drag", "fill", "select", "check", "uncheck", "hover", "press", "type", "tap", "focus", "goto", "reload", "go-back", "go-forward", "resize", "set-input-files":
+		return true
+	default:
+		return false
+	}
+}
+
+func snapshotResetsSessionContext(action string) bool {
+	switch action {
+	case "goto", "reload", "go-back", "go-forward", "tab-new", "tab-close", "tab-select":
 		return true
 	default:
 		return false

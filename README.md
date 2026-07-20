@@ -11,6 +11,9 @@ needed to diagnose failures.
 
 Playwright still owns the browser, locators, assertions, traces, and HTML
 reports. Heimdal does not add another browser protocol or test framework.
+It wraps the runtime to remove repeated agent work: project and session lookup,
+app lifecycle, compact semantic evidence, and durable artifacts all use one
+consistent command surface.
 
 Worktree-isolated browser testing is a central reason Heimdal exists. Parallel
 agents should be able to test different branches without sharing a dev-server
@@ -83,7 +86,6 @@ A named session keeps a browser available across commands:
 
 ```bash
 heimdal session start --dir /path/to/worktree --name qa
-heimdal session observe --name qa
 heimdal session click e12 --name qa
 heimdal session diagnose --name qa --json
 heimdal session save --name qa --test tests/browser/exploration.spec.ts
@@ -99,7 +101,30 @@ heimdal session start --dir /path/to/worktree --name qa-visible --headed
 
 Headed and headless sessions have the same persistence and evidence behavior.
 Snapshots are semantic and omit coordinates by default. Add `--boxes` only
-when layout or coordinate-based interaction requires bounding boxes.
+when layout or coordinate-based interaction requires bounding boxes. A
+state-changing action returns only its semantic delta when that is smaller than
+the full state, while retaining the complete snapshot as an artifact. Add
+`--full` when the complete semantic tree is needed.
+
+Known consecutive actions can share one agent round trip through a bounded JSON
+batch:
+
+```json
+{
+  "version": 1,
+  "steps": [
+    { "command": "fill", "args": ["e5", "hello"] },
+    { "command": "click", "args": ["e8"] }
+  ]
+}
+```
+
+```bash
+heimdal session batch --file browser-steps.json --name qa --json
+```
+
+Batch execution stops at the first failed step. Ordinary action JSON omits
+repeated session metadata; use `--json=full` when that metadata is required.
 
 The directory supplied to `session start` is recorded, so later commands can
 find a uniquely named session even when run from another directory. Pass
@@ -204,6 +229,13 @@ than a general performance claim; agent choices vary and token totals include
 cached context. The result supports Heimdal's narrower rationale: keep
 Playwright as the runtime while giving terminal agents compact, persistent,
 project-scoped browser control.
+
+The current implementation also captures Playwright's generated locator from
+the action itself instead of launching a second locator command. A deterministic
+local microbenchmark on the same date measured cached session discovery at
+about 30 µs versus 10 ms for full project rediscovery. These timings cover
+Heimdal overhead only; browser startup and page behavior remain
+application-dependent.
 
 ## Development
 

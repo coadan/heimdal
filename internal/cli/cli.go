@@ -25,6 +25,7 @@ Usage:
   heimdal session observe [options]
   heimdal session screenshot [options]
   heimdal session diagnose [options]
+  heimdal session batch --file FILE|- [options]
   heimdal session save [options]
   heimdal session <PLAYWRIGHT_CLI_COMMAND> [options]
   heimdal report [--dir PATH] [--run ID] [--json]
@@ -55,14 +56,17 @@ Session options:
   --persistent     Keep browser profile on disk
   --no-server      Do not start the configured session command
   --boxes          Include bounding boxes for coordinate-based inspection
+  --full           Return a full semantic snapshot instead of a delta
   --verbose        Show complete Playwright CLI output
   --force          Replace an existing Heimdal session state
+  --json           Print compact agent-readable JSON
+  --json=full      Include repeated session metadata in JSON actions
 
 Examples:
   heimdal doctor
-  heimdal run -- tests/browser/combat.spec.ts --grep "victory"
-  heimdal run --headed -- tests/browser/combat.spec.ts
-  heimdal report --run codex-browser-20260716t120000z-1234
+  heimdal run -- tests/browser/navigation.spec.ts --grep "opens the menu"
+  heimdal run --headed -- tests/browser/navigation.spec.ts
+  heimdal report --run browser-check-20260716t120000z-1234
   heimdal trace --run latest
 `
 

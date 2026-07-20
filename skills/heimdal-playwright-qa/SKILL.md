@@ -46,19 +46,34 @@ The first two support sessions; the last supports repository tests.
 
 ## Keep interaction bounded
 
-`session start` and state-changing actions return a fresh accessibility
-snapshot. Do not immediately call `observe` again. Prefer current refs and
-user-facing locators over CSS, XPath, or coordinates. Semantic snapshots omit
-boxes by default; add `--boxes` only for coordinate or layout work.
+`session start` returns a semantic accessibility snapshot. State-changing
+actions return a semantic delta when it is smaller, with fresh refs for changed
+controls. Do not immediately call `observe` again. Prefer current refs and
+user-facing locators over CSS, XPath, or coordinates. Add `--full` when the
+complete tree is needed and `--boxes` only for coordinate or layout work.
 
 Use snapshots for structure and interaction. Request a screenshot only for
-Use `--verbose` only when compact output omits a needed fact. Forward uncommon
-Playwright CLI options after `--`:
+visual appearance or layout. Use `--verbose` only when compact output omits a
+needed fact. Forward uncommon Playwright CLI options after `--`:
 
 ```bash
 heimdal session observe -- --depth=4
 heimdal session screenshot -- --full-page
 ```
+
+Put known consecutive actions in one bounded batch to reduce agent round trips:
+
+```json
+{"version":1,"steps":[{"command":"fill","args":["e5","hello"]},{"command":"click","args":["e8"]}]}
+```
+
+```bash
+heimdal session batch --file browser-steps.json --json
+```
+
+The batch stops at the first failed step and returns the final snapshot or
+delta. Action JSON is compact by default; use `--json=full` only when repeated
+session metadata is needed.
 
 ## Diagnose from summaries first
 
