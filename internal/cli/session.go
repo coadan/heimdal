@@ -174,6 +174,12 @@ func runSession(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return runSessionDiagnose(ctx, args[1:], out, errOut)
 	case "wait":
 		return runSessionWait(ctx, args[1:], out, errOut)
+	case "timeline":
+		return runSessionTimeline(args[1:], out, errOut)
+	case "report":
+		return runSessionReport(args[1:], out, errOut)
+	case "checkpoint":
+		return runSessionCheckpoint(args[1:], out, errOut)
 	case "batch":
 		return runSessionBatch(ctx, args[1:], out, errOut)
 	case "save":
@@ -193,6 +199,9 @@ Usage:
   heimdal session screenshot [options] [-- PLAYWRIGHT_CLI_ARGS...]
   heimdal session diagnose [options]
   heimdal session wait (--role ROLE [--name NAME] | --text TEXT | --change) [options]
+  heimdal session timeline [NAME] [options]
+  heimdal session report [NAME] [options]
+  heimdal session checkpoint LABEL [options]
   heimdal session batch --file FILE|- [options]
   heimdal session save [options]
   heimdal session <PLAYWRIGHT_CLI_COMMAND> [options]
@@ -238,6 +247,8 @@ Examples:
   heimdal session click e12
   heimdal session fill e5 "hello"
   heimdal session wait --role button --name "Continue" --state enabled --timeout 30s
+  heimdal session checkpoint "entered checkout"
+  heimdal session timeline --json
   heimdal session batch --file ./browser-steps.json
   heimdal session diagnose --json
   heimdal session save --test tests/browser/exploration.spec.ts
@@ -1634,7 +1645,7 @@ func sessionActionTestLines(action SessionActionRecord) []string {
 		return quoteTypeScript(action.Args[index])
 	}
 	switch command {
-	case "open", "snapshot", "screenshot", "console", "requests", "highlight", "find", "tab-list", "request", "request-headers", "request-body", "response-headers", "response-body", "cookie-list", "cookie-get", "localstorage-list", "localstorage-get", "sessionstorage-list", "sessionstorage-get":
+	case "open", "snapshot", "screenshot", "console", "requests", "highlight", "find", "tab-list", "request", "request-headers", "request-body", "response-headers", "response-body", "cookie-list", "cookie-get", "localstorage-list", "localstorage-get", "sessionstorage-list", "sessionstorage-get", "checkpoint":
 		return nil
 	case "goto":
 		return []string{"await page.goto(" + quoted(1) + ");"}

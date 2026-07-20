@@ -160,6 +160,20 @@ versions: targeted `press` and `type`, `fill --submit`, `click --force`, and
 `mouse click X Y` are canonical forms. Invalid shapes return a bounded
 correction instead of embedding the upstream help page.
 
+Mark important states and inspect a long exploration without reconstructing
+hundreds of action files:
+
+```bash
+heimdal session checkpoint "entered checkout"
+heimdal session timeline --json
+heimdal session report --json
+```
+
+The timeline groups navigation, interaction, waits, evidence, console checks,
+failures, and checkpoints, and maps recorded actions to generated-test line
+numbers. Checkpoints are durable labels, not promises that an arbitrary
+Playwright test fixture can resume from that browser state.
+
 Sessions are headless by default, which suits unattended agents. Add
 `--headed` to `session start` when you want a visible, inspectable browser:
 

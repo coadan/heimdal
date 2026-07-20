@@ -90,6 +90,18 @@ named browser. Canonical targeted forms include `press TARGET KEY`, `type TARGET
 TEXT`, `fill TARGET TEXT --submit`, `click TARGET --force`, and `mouse click X
 Y`. Follow Heimdal's structured correction when a command shape is invalid.
 
+Checkpoint meaningful states in long explorations and use the synthesized
+timeline before reading individual action logs:
+
+```bash
+heimdal session checkpoint "entered checkout"
+heimdal session timeline --json
+heimdal session report --json
+```
+
+Checkpoints label recoverable session state and appear in reports; they do not
+make arbitrary repository test fixtures resumable.
+
 Put known consecutive actions in one bounded batch to reduce agent round trips:
 
 ```json
