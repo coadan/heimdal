@@ -139,8 +139,9 @@ or trace when diagnosing the newest failure. Pin only evidence that must outlive
 normal retention, then unpin it with `runs pin <run-id> --remove`.
 
 Use `heimdal gc --dry-run` before manual artifact cleanup. Retention preserves
-pins, active runs, recent runs, and the configured number of failures; do not
-delete `.heimdal` paths directly.
+pins, active runs, recent runs, and the configured number of distinct failure
+fingerprints within its byte budget. Pruned runs remain as compact indexed
+history, so use `runs list` rather than scanning or deleting `.heimdal` paths.
 
 `session save --test` creates a TypeScript draft, not a finished regression
 test. Replace TODO locators and add an assertion for the user-visible outcome.

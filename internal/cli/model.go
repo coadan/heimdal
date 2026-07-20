@@ -59,9 +59,10 @@ type ArtifactConfig struct {
 }
 
 type RetentionConfig struct {
-	Enabled      bool `json:"enabled"`
-	MaxAgeDays   int  `json:"max_age_days"`
-	KeepFailures int  `json:"keep_failures"`
+	Enabled      bool  `json:"enabled"`
+	MaxAgeDays   int   `json:"max_age_days"`
+	KeepFailures int   `json:"keep_failures"`
+	MaxBytes     int64 `json:"max_bytes"`
 }
 
 type Project struct {
@@ -89,7 +90,7 @@ func defaultConfig(playwrightConfig string) Config {
 		},
 		Artifacts: ArtifactConfig{
 			Directory: defaultArtifactDir,
-			Retention: RetentionConfig{Enabled: true, MaxAgeDays: 14, KeepFailures: 20},
+			Retention: RetentionConfig{Enabled: true, MaxAgeDays: 14, KeepFailures: 20, MaxBytes: 5 * 1024 * 1024 * 1024},
 		},
 	}
 }
@@ -113,7 +114,7 @@ func loadConfig(root string, detectedConfig string) (Config, string, error) {
 	if cfg.Artifacts.Directory == "" {
 		cfg.Artifacts.Directory = defaultArtifactDir
 	}
-	if cfg.Artifacts.Retention.MaxAgeDays < 0 || cfg.Artifacts.Retention.KeepFailures < 0 {
+	if cfg.Artifacts.Retention.MaxAgeDays < 0 || cfg.Artifacts.Retention.KeepFailures < 0 || cfg.Artifacts.Retention.MaxBytes < 0 {
 		return Config{}, path, errors.New("artifact retention values cannot be negative")
 	}
 	if cfg.Playwright.Config == "" {

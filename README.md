@@ -110,16 +110,21 @@ run timing, and artifact indexes. Use `heimdal trace --run latest` without
 only when inspecting a direct trace path or requesting trace data separately.
 
 Artifact retention is enabled by default: runs older than 14 days are eligible
-for removal while the 20 newest failures remain protected. Pinned, active, and
-unrecognized directories are never removed. Inspect any cleanup first:
+for removal, retained run artifacts are bounded to 5 GiB, and the newest full
+run for up to 20 distinct failure fingerprints remains protected. Pinned,
+active, and unrecognized directories are never removed. Pruned runs keep small
+history records, so `runs list` can still group repeated failures without
+retaining every trace and video. Inspect any cleanup first:
 
 ```bash
 heimdal gc --dry-run
 heimdal gc --older-than 14d --keep-failures 20
+heimdal gc --max-bytes 5GB --dry-run
 ```
 
 Automatic cleanup runs at most once per day. `heimdal doctor --json` reports
-artifact bytes, reclaimable bytes, and interrupted runs.
+artifact bytes, the configured budget, reclaimable bytes, and interrupted runs;
+it warns when usage exceeds the budget.
 
 Use `--run-id ID` when another process needs a stable run name. Run IDs contain
 lowercase letters, numbers, and hyphens.
@@ -226,7 +231,8 @@ interactive QA can use this shape:
     "retention": {
       "enabled": true,
       "max_age_days": 14,
-      "keep_failures": 20
+      "keep_failures": 20,
+      "max_bytes": 5368709120
     }
   }
 }

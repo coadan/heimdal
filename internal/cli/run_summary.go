@@ -194,9 +194,15 @@ func fileProgress(path string) (int64, string, time.Time) {
 
 func enrichRunResult(result *RunResult) {
 	analysis := analyzeRunOutput(result.StdoutTail, result.StderrTail)
-	result.Tests = analysis.Tests
-	result.PrimaryFailure = analysis.PrimaryFailure
-	result.Warnings = analysis.Warnings
+	if result.Tests == nil {
+		result.Tests = analysis.Tests
+	}
+	if result.PrimaryFailure == nil {
+		result.PrimaryFailure = analysis.PrimaryFailure
+	}
+	if len(result.Warnings) == 0 {
+		result.Warnings = analysis.Warnings
+	}
 	if result.PrimaryFailure != nil && result.Status == "failed" {
 		result.ProcessError = result.Failure
 		result.Failure = result.PrimaryFailure.Message

@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -12,8 +13,35 @@ func TestDefaultArtifactsUseDedicatedRootAndRetention(t *testing.T) {
 	if config.Artifacts.Directory != ".heimdal" {
 		t.Fatalf("default artifact directory = %q", config.Artifacts.Directory)
 	}
-	if !config.Artifacts.Retention.Enabled || config.Artifacts.Retention.MaxAgeDays != 14 || config.Artifacts.Retention.KeepFailures != 20 {
+	if !config.Artifacts.Retention.Enabled || config.Artifacts.Retention.MaxAgeDays != 14 || config.Artifacts.Retention.KeepFailures != 20 || config.Artifacts.Retention.MaxBytes != 5*1024*1024*1024 {
 		t.Fatalf("default retention = %#v", config.Artifacts.Retention)
+	}
+}
+
+func TestParseArtifactByteBudget(t *testing.T) {
+	for input, expected := range map[string]int64{"0": 0, "512KB": 512 * 1024, "5GB": 5 * 1024 * 1024 * 1024} {
+		actual, err := parseByteSize(input)
+		if err != nil || actual != expected {
+			t.Fatalf("parse %s = %d, %v; want %d", input, actual, err, expected)
+		}
+	}
+	if _, err := parseByteSize("large"); err == nil {
+		t.Fatal("invalid byte budget was accepted")
+	}
+}
+
+func TestExistingRetentionConfigInheritsDefaultByteBudget(t *testing.T) {
+	root := t.TempDir()
+	contents := []byte(`{"version":1,"artifacts":{"directory":".heimdal","retention":{"enabled":true,"max_age_days":30,"keep_failures":5}}}`)
+	if err := os.WriteFile(filepath.Join(root, configFileName), contents, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	config, _, err := loadConfig(root, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.Artifacts.Retention.MaxBytes != 5*1024*1024*1024 || config.Artifacts.Retention.MaxAgeDays != 30 {
+		t.Fatalf("loaded retention = %#v", config.Artifacts.Retention)
 	}
 }
 
@@ -68,6 +96,50 @@ func TestArtifactGCIsBoundedAndPreservesPinnedActiveAndRecentRuns(t *testing.T) 
 	}
 }
 
+func TestArtifactBudgetKeepsOneFullRunPerFailureFingerprintAndArchivesDuplicates(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
+	createFingerprintRun(t, root, "duplicate-old", now.Add(-4*time.Hour), "same")
+	createResultRun(t, root, "passed-old", "passed", now.Add(-3*time.Hour), false)
+	createFingerprintRun(t, root, "unique-failure", now.Add(-2*time.Hour), "unique")
+	createFingerprintRun(t, root, "duplicate-new", now.Add(-time.Hour), "same")
+
+	retention := RetentionConfig{Enabled: true, MaxAgeDays: 14, KeepFailures: 2, MaxBytes: 1}
+	dryRun, err := collectArtifactGarbage(root, retention, true, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dryRun.Candidates != 2 || dryRun.Removed != 0 || dryRun.Archived != 0 {
+		t.Fatalf("budget dry run = %#v", dryRun)
+	}
+	for _, item := range dryRun.Items {
+		if !strings.Contains(item.Reason, "artifact budget") {
+			t.Fatalf("budget reason = %#v", item)
+		}
+	}
+
+	collected, err := collectArtifactGarbage(root, retention, false, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if collected.Removed != 2 || collected.Archived != 2 {
+		t.Fatalf("budget collection = %#v", collected)
+	}
+	for _, kept := range []string{"duplicate-new", "unique-failure"} {
+		if _, err := os.Stat(filepath.Join(root, kept)); err != nil {
+			t.Fatalf("protected failure %s was removed: %v", kept, err)
+		}
+	}
+	archived, err := readArchivedRun(root, "duplicate-old")
+	if err != nil || !archived.Archived || archived.PrimaryFailure == nil || archived.PrimaryFailure.Fingerprint != "same" {
+		t.Fatalf("archived duplicate = %#v, %v", archived, err)
+	}
+	listed, err := listRunInventory(root, runsOptions{Limit: 50}, now)
+	if err != nil || listed.Matched != 4 {
+		t.Fatalf("inventory with compact history = %#v, %v", listed, err)
+	}
+}
+
 func createResultRun(t *testing.T, root, id, status string, started time.Time, pinned bool) {
 	t.Helper()
 	directory := filepath.Join(root, id)
@@ -96,6 +168,20 @@ func createInterruptedRun(t *testing.T, root, id string, started time.Time) {
 	}
 	manifest := RunManifest{SchemaVersion: 1, RunID: id, Status: "running", StartedAt: started, Artifacts: Artifacts{RunDir: directory}}
 	if err := writeJSON(filepath.Join(directory, "run.json"), manifest); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func createFingerprintRun(t *testing.T, root, id string, started time.Time, fingerprint string) {
+	t.Helper()
+	createResultRun(t, root, id, "failed", started, false)
+	path := filepath.Join(root, id, "result.json")
+	result, err := readResult(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result.PrimaryFailure = &PrimaryFailure{Message: "representative failure", Fingerprint: fingerprint}
+	if err := writeJSON(path, result); err != nil {
 		t.Fatal(err)
 	}
 }

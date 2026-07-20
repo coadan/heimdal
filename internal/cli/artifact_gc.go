@@ -21,14 +21,16 @@ Options:
   --dir PATH          Discover the project from PATH
   --artifacts PATH    Override the configured artifact root
   --older-than AGE    Remove eligible runs older than AGE (for example 14d)
-  --keep-failures N   Retain the N newest failed runs regardless of age
+  --keep-failures N   Retain the newest full run for N failure fingerprints
+  --max-bytes SIZE    Bound retained run artifacts (for example 5GB; 0 disables)
   --dry-run           Report candidates without deleting them
   --json              Print structured output
   --help              Print this help
 
 Pinned runs, active runs, session data, and unrecognized directories are never
-removed. Automatic retention uses artifacts.retention from .heimdal.json and
-runs at most once per day.
+removed. Pruned runs keep compact inventory summaries under .heimdal/.history.
+Automatic retention uses artifacts.retention from .heimdal.json and runs at
+most once per day.
 `
 
 type gcOptions struct {
@@ -40,6 +42,8 @@ type gcOptions struct {
 	OlderThanSet    bool
 	KeepFailures    int
 	KeepFailuresSet bool
+	MaxBytes        int64
+	MaxBytesSet     bool
 	Help            bool
 }
 
@@ -59,19 +63,26 @@ type GCResult struct {
 	Scanned          int      `json:"scanned"`
 	Candidates       int      `json:"candidates"`
 	Removed          int      `json:"removed"`
+	Archived         int      `json:"archived"`
 	ReclaimableBytes int64    `json:"reclaimable_bytes"`
 	Items            []GCItem `json:"items,omitempty"`
 	Omitted          int      `json:"omitted,omitempty"`
 }
 
 type artifactRun struct {
-	ID        string
-	Path      string
-	Status    string
-	StartedAt time.Time
-	SizeBytes int64
-	Pinned    bool
-	Active    bool
+	ID          string
+	Path        string
+	Status      string
+	StartedAt   time.Time
+	SizeBytes   int64
+	Pinned      bool
+	Active      bool
+	Fingerprint string
+}
+
+type artifactGCCandidate struct {
+	Run    artifactRun
+	Reason string
 }
 
 func runGC(args []string, out, errOut io.Writer) int {
@@ -93,6 +104,9 @@ func runGC(args []string, out, errOut io.Writer) int {
 	}
 	if options.KeepFailuresSet {
 		retention.KeepFailures = options.KeepFailures
+	}
+	if options.MaxBytesSet {
+		retention.MaxBytes = options.MaxBytes
 	}
 	root := artifactRoot(project, options.Artifacts)
 	result, err := collectArtifactGarbage(root, retention, options.DryRun, time.Now().UTC())
@@ -159,6 +173,16 @@ func parseGCOptions(args []string) (gcOptions, error) {
 				return options, fmt.Errorf("--keep-failures must be a non-negative integer (got %q)", value)
 			}
 			index, options.KeepFailures, options.KeepFailuresSet = next, count, true
+		case "--max-bytes":
+			value, next, err := nextValue(args, index, "--max-bytes")
+			if err != nil {
+				return options, err
+			}
+			bytes, err := parseByteSize(value)
+			if err != nil {
+				return options, err
+			}
+			index, options.MaxBytes, options.MaxBytesSet = next, bytes, true
 		case "--dry-run":
 			options.DryRun = true
 		case "--json":
@@ -170,6 +194,26 @@ func parseGCOptions(args []string) (gcOptions, error) {
 		}
 	}
 	return options, nil
+}
+
+func parseByteSize(value string) (int64, error) {
+	normalized := strings.ToUpper(strings.TrimSpace(value))
+	multiplier := int64(1)
+	for _, suffix := range []struct {
+		name       string
+		multiplier int64
+	}{{"GB", 1024 * 1024 * 1024}, {"MB", 1024 * 1024}, {"KB", 1024}, {"B", 1}} {
+		if strings.HasSuffix(normalized, suffix.name) {
+			normalized = strings.TrimSpace(strings.TrimSuffix(normalized, suffix.name))
+			multiplier = suffix.multiplier
+			break
+		}
+	}
+	amount, err := strconv.ParseInt(normalized, 10, 64)
+	if err != nil || amount < 0 || (amount > 0 && amount > (1<<63-1)/multiplier) {
+		return 0, fmt.Errorf("--max-bytes must be a non-negative size such as 5GB (got %q)", value)
+	}
+	return amount * multiplier, nil
 }
 
 func parseRetentionAge(value string) (time.Duration, error) {
@@ -204,18 +248,23 @@ func collectArtifactGarbage(root string, retention RetentionConfig, dryRun bool,
 		return result, err
 	}
 	result.Scanned = len(runs)
-	candidates := artifactGarbageCandidates(runs, retention, now)
+	candidates := artifactGarbagePlan(runs, retention, now)
 	result.Candidates = len(candidates)
-	for _, run := range candidates {
+	for _, candidate := range candidates {
+		run := candidate.Run
 		result.ReclaimableBytes += run.SizeBytes
 		if len(result.Items) < 200 {
-			result.Items = append(result.Items, GCItem{RunID: run.ID, Status: run.Status, StartedAt: run.StartedAt, SizeBytes: run.SizeBytes, Reason: fmt.Sprintf("older than %dd", retention.MaxAgeDays)})
+			result.Items = append(result.Items, GCItem{RunID: run.ID, Status: run.Status, StartedAt: run.StartedAt, SizeBytes: run.SizeBytes, Reason: candidate.Reason})
 		} else {
 			result.Omitted++
 		}
 		if dryRun {
 			continue
 		}
+		if err := archiveRunSummary(root, run, candidate.Reason, now); err != nil {
+			return result, err
+		}
+		result.Archived++
 		if err := removeArtifactRun(root, run.Path); err != nil {
 			return result, err
 		}
@@ -225,6 +274,15 @@ func collectArtifactGarbage(root string, retention RetentionConfig, dryRun bool,
 }
 
 func artifactGarbageCandidates(runs []artifactRun, retention RetentionConfig, now time.Time) []artifactRun {
+	plan := artifactGarbagePlan(runs, retention, now)
+	candidates := make([]artifactRun, 0, len(plan))
+	for _, candidate := range plan {
+		candidates = append(candidates, candidate.Run)
+	}
+	return candidates
+}
+
+func artifactGarbagePlan(runs []artifactRun, retention RetentionConfig, now time.Time) []artifactGCCandidate {
 	failures := make([]artifactRun, 0)
 	for _, run := range runs {
 		if run.Status == "failed" {
@@ -233,18 +291,54 @@ func artifactGarbageCandidates(runs []artifactRun, retention RetentionConfig, no
 	}
 	sort.Slice(failures, func(left, right int) bool { return failures[left].StartedAt.After(failures[right].StartedAt) })
 	protectedFailures := make(map[string]bool)
-	for index := 0; index < len(failures) && index < retention.KeepFailures; index++ {
-		protectedFailures[failures[index].ID] = true
+	protectedFingerprints := make(map[string]bool)
+	for _, failure := range failures {
+		fingerprint := failure.Fingerprint
+		if fingerprint == "" {
+			fingerprint = "run:" + failure.ID
+		}
+		if protectedFingerprints[fingerprint] || len(protectedFingerprints) >= retention.KeepFailures {
+			continue
+		}
+		protectedFingerprints[fingerprint] = true
+		protectedFailures[failure.ID] = true
 	}
 	cutoff := now.Add(-time.Duration(retention.MaxAgeDays) * 24 * time.Hour)
-	candidates := make([]artifactRun, 0)
+	selected := make(map[string]bool)
+	candidates := make([]artifactGCCandidate, 0)
 	for _, run := range runs {
 		if run.Pinned || run.Active || protectedFailures[run.ID] || run.StartedAt.After(cutoff) {
 			continue
 		}
-		candidates = append(candidates, run)
+		selected[run.ID] = true
+		candidates = append(candidates, artifactGCCandidate{Run: run, Reason: fmt.Sprintf("older than %dd", retention.MaxAgeDays)})
 	}
-	sort.Slice(candidates, func(left, right int) bool { return candidates[left].StartedAt.Before(candidates[right].StartedAt) })
+	if retention.MaxBytes > 0 {
+		var retainedBytes int64
+		for _, run := range runs {
+			if !selected[run.ID] {
+				retainedBytes += run.SizeBytes
+			}
+		}
+		if retainedBytes > retention.MaxBytes {
+			remaining := append([]artifactRun(nil), runs...)
+			sort.Slice(remaining, func(left, right int) bool { return remaining[left].StartedAt.Before(remaining[right].StartedAt) })
+			for _, run := range remaining {
+				if retainedBytes <= retention.MaxBytes {
+					break
+				}
+				if selected[run.ID] || run.Pinned || run.Active || protectedFailures[run.ID] {
+					continue
+				}
+				selected[run.ID] = true
+				retainedBytes -= run.SizeBytes
+				candidates = append(candidates, artifactGCCandidate{Run: run, Reason: fmt.Sprintf("artifact budget exceeds %d bytes", retention.MaxBytes)})
+			}
+		}
+	}
+	sort.Slice(candidates, func(left, right int) bool {
+		return candidates[left].Run.StartedAt.Before(candidates[right].Run.StartedAt)
+	})
 	return candidates
 }
 
@@ -255,7 +349,7 @@ func inspectArtifactRuns(root string, now time.Time) ([]artifactRun, error) {
 	}
 	runs := make([]artifactRun, 0, len(entries))
 	for _, entry := range entries {
-		if !entry.IsDir() || entry.Name() == "sessions" {
+		if !entry.IsDir() || entry.Name() == "sessions" || entry.Name() == ".history" {
 			continue
 		}
 		path := filepath.Join(root, entry.Name())
@@ -269,6 +363,12 @@ func inspectArtifactRuns(root string, now time.Time) ([]artifactRun, error) {
 		}
 		if result, err := readResult(filepath.Join(path, "result.json")); err == nil {
 			run.Status, run.StartedAt = result.Status, result.StartedAt
+			if result.PrimaryFailure == nil && result.Status == "failed" {
+				enrichRunResult(&result)
+			}
+			if result.PrimaryFailure != nil {
+				run.Fingerprint = result.PrimaryFailure.Fingerprint
+			}
 			run.SizeBytes = result.Artifacts.RunBytes
 			if run.SizeBytes == 0 {
 				run.SizeBytes = directoryBytes(path)

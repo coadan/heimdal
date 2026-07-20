@@ -169,6 +169,7 @@ func runDoctor(args []string, out, errOut io.Writer) int {
 	report.Runner = project.Runner
 	report.AgentRunner = project.AgentRunner
 	report.ArtifactRoot = artifactRoot(project, "")
+	report.ArtifactBudgetBytes = project.Config.Artifacts.Retention.MaxBytes
 	if runs, inspectErr := inspectArtifactRuns(report.ArtifactRoot, time.Now().UTC()); inspectErr == nil {
 		for _, run := range runs {
 			report.ArtifactBytes += run.SizeBytes
@@ -178,6 +179,9 @@ func runDoctor(args []string, out, errOut io.Writer) int {
 		}
 		for _, run := range artifactGarbageCandidates(runs, project.Config.Artifacts.Retention, time.Now().UTC()) {
 			report.ReclaimableBytes += run.SizeBytes
+		}
+		if report.ArtifactBudgetBytes > 0 && report.ArtifactBytes > report.ArtifactBudgetBytes {
+			report.Warnings = append(report.Warnings, fmt.Sprintf("artifact usage exceeds the configured %d-byte budget; run `heimdal gc --dry-run`", report.ArtifactBudgetBytes))
 		}
 	}
 	version, versionErr := runCapture(project.Root, append(project.Runner, "--version"), baseEnvironment())
@@ -209,25 +213,26 @@ func runDoctor(args []string, out, errOut io.Writer) int {
 }
 
 type DoctorReport struct {
-	SchemaVersion     int      `json:"schema_version"`
-	Status            string   `json:"status"`
-	Root              string   `json:"root"`
-	Branch            string   `json:"branch,omitempty"`
-	ConfigFile        string   `json:"config_file,omitempty"`
-	PlaywrightConfig  string   `json:"playwright_config,omitempty"`
-	PackageManager    string   `json:"package_manager,omitempty"`
-	Runner            []string `json:"runner,omitempty"`
-	AgentRunner       []string `json:"agent_runner,omitempty"`
-	PlaywrightReady   bool     `json:"playwright_ready"`
-	SessionReady      bool     `json:"session_ready"`
-	PlaywrightVersion string   `json:"playwright_version,omitempty"`
-	AgentVersion      string   `json:"agent_cli_version,omitempty"`
-	ArtifactRoot      string   `json:"artifact_root,omitempty"`
-	ArtifactBytes     int64    `json:"artifact_bytes,omitempty"`
-	ReclaimableBytes  int64    `json:"reclaimable_bytes,omitempty"`
-	InterruptedRuns   int      `json:"interrupted_runs,omitempty"`
-	Warnings          []string `json:"warnings,omitempty"`
-	Error             string   `json:"error,omitempty"`
+	SchemaVersion       int      `json:"schema_version"`
+	Status              string   `json:"status"`
+	Root                string   `json:"root"`
+	Branch              string   `json:"branch,omitempty"`
+	ConfigFile          string   `json:"config_file,omitempty"`
+	PlaywrightConfig    string   `json:"playwright_config,omitempty"`
+	PackageManager      string   `json:"package_manager,omitempty"`
+	Runner              []string `json:"runner,omitempty"`
+	AgentRunner         []string `json:"agent_runner,omitempty"`
+	PlaywrightReady     bool     `json:"playwright_ready"`
+	SessionReady        bool     `json:"session_ready"`
+	PlaywrightVersion   string   `json:"playwright_version,omitempty"`
+	AgentVersion        string   `json:"agent_cli_version,omitempty"`
+	ArtifactRoot        string   `json:"artifact_root,omitempty"`
+	ArtifactBytes       int64    `json:"artifact_bytes,omitempty"`
+	ArtifactBudgetBytes int64    `json:"artifact_budget_bytes,omitempty"`
+	ReclaimableBytes    int64    `json:"reclaimable_bytes,omitempty"`
+	InterruptedRuns     int      `json:"interrupted_runs,omitempty"`
+	Warnings            []string `json:"warnings,omitempty"`
+	Error               string   `json:"error,omitempty"`
 }
 
 func printDoctor(report DoctorReport, asJSON bool, out, errOut io.Writer, exitCode int) int {

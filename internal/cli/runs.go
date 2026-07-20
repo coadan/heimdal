@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -34,6 +35,9 @@ type RunInventoryItem struct {
 	SizeBytes      int64           `json:"size_bytes"`
 	Pinned         bool            `json:"pinned"`
 	Interrupted    bool            `json:"interrupted"`
+	Archived       bool            `json:"archived,omitempty"`
+	PrunedAt       time.Time       `json:"pruned_at,omitempty"`
+	PrunedReason   string          `json:"pruned_reason,omitempty"`
 	Invocation     RunInvocation   `json:"invocation"`
 	Tests          *TestCounts     `json:"tests,omitempty"`
 	PrimaryFailure *PrimaryFailure `json:"primary_failure,omitempty"`
@@ -114,7 +118,16 @@ func runRuns(args []string, out, errOut io.Writer) int {
 		}
 		runDir, err := findReportRunDirectory(root, selector)
 		if err != nil {
-			return reportError(options.JSON, err, out, errOut)
+			archived, archivedErr := readArchivedRun(root, selector)
+			if archivedErr != nil {
+				return reportError(options.JSON, err, out, errOut)
+			}
+			if options.JSON {
+				_ = writeJSONTo(out, archived)
+			} else {
+				fmt.Fprintf(out, "%s  %s  %s  archived (%s)\n", archived.StartedAt.Format(time.RFC3339), archived.Status, archived.RunID, archived.PrunedReason)
+			}
+			return 0
 		}
 		report, exitCode, err := readRunReportDetailed(runDir, !options.JSON || options.FullJSON)
 		if err != nil {
@@ -247,10 +260,7 @@ func validRunStatus(status string) bool {
 func listRunInventory(root string, options runsOptions, now time.Time) (RunsListResult, error) {
 	result := RunsListResult{SchemaVersion: 1, ArtifactRoot: root, Runs: []RunInventoryItem{}}
 	runs, err := inspectArtifactRuns(root, now)
-	if errors.Is(err, os.ErrNotExist) {
-		return result, nil
-	}
-	if err != nil {
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return result, err
 	}
 	for _, run := range runs {
@@ -258,16 +268,14 @@ func listRunInventory(root string, options runsOptions, now time.Time) (RunsList
 		if err != nil {
 			continue
 		}
-		if options.Status != "" && item.Status != options.Status {
-			continue
-		}
-		if options.SinceSet && item.StartedAt.Before(now.Add(-options.Since)) {
-			continue
-		}
-		if options.Test != "" && !inventoryMatchesTest(item, options.Test) {
-			continue
-		}
-		result.Runs = append(result.Runs, item)
+		result.Runs = appendInventoryMatch(result.Runs, item, options, now)
+	}
+	archived, err := readArchivedRuns(root)
+	if err != nil {
+		return result, err
+	}
+	for _, item := range archived {
+		result.Runs = appendInventoryMatch(result.Runs, item, options, now)
 	}
 	sort.Slice(result.Runs, func(left, right int) bool { return result.Runs[left].StartedAt.After(result.Runs[right].StartedAt) })
 	result.Matched = len(result.Runs)
@@ -276,6 +284,19 @@ func listRunInventory(root string, options runsOptions, now time.Time) (RunsList
 		result.Runs = result.Runs[:options.Limit]
 	}
 	return result, nil
+}
+
+func appendInventoryMatch(items []RunInventoryItem, item RunInventoryItem, options runsOptions, now time.Time) []RunInventoryItem {
+	if options.Status != "" && item.Status != options.Status {
+		return items
+	}
+	if options.SinceSet && item.StartedAt.Before(now.Add(-options.Since)) {
+		return items
+	}
+	if options.Test != "" && !inventoryMatchesTest(item, options.Test) {
+		return items
+	}
+	return append(items, item)
 }
 
 func inventoryItem(run artifactRun) (RunInventoryItem, error) {
@@ -352,6 +373,11 @@ func compareRuns(root, oldSelector, newSelector string) (RunComparison, error) {
 func inventoryItemForSelector(root, selector string) (RunInventoryItem, error) {
 	directory, err := findReportRunDirectory(root, selector)
 	if err != nil {
+		if validArtifactID(selector) {
+			if archived, archivedErr := readArchivedRun(root, selector); archivedErr == nil {
+				return archived, nil
+			}
+		}
 		return RunInventoryItem{}, err
 	}
 	runs, err := inspectArtifactRuns(root, time.Now().UTC())
@@ -364,6 +390,63 @@ func inventoryItemForSelector(root, selector string) (RunInventoryItem, error) {
 		}
 	}
 	return RunInventoryItem{}, fmt.Errorf("run %s is not a recognized Heimdal run", filepath.Base(directory))
+}
+
+func archiveRunSummary(root string, run artifactRun, reason string, now time.Time) error {
+	item, err := inventoryItem(run)
+	if err != nil {
+		return fmt.Errorf("archive run summary %s: %w", run.ID, err)
+	}
+	item.Archived = true
+	item.PrunedAt = now
+	item.PrunedReason = reason
+	directory := filepath.Join(root, ".history")
+	if err := os.MkdirAll(directory, 0o755); err != nil {
+		return fmt.Errorf("create run history: %w", err)
+	}
+	if err := writeJSON(filepath.Join(directory, run.ID+".json"), item); err != nil {
+		return fmt.Errorf("write run history: %w", err)
+	}
+	return nil
+}
+
+func readArchivedRuns(root string) ([]RunInventoryItem, error) {
+	directory := filepath.Join(root, ".history")
+	entries, err := os.ReadDir(directory)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read run history: %w", err)
+	}
+	items := make([]RunInventoryItem, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		item, err := readArchivedRun(root, strings.TrimSuffix(entry.Name(), ".json"))
+		if err == nil {
+			items = append(items, item)
+		}
+	}
+	return items, nil
+}
+
+func readArchivedRun(root, id string) (RunInventoryItem, error) {
+	if !validArtifactID(id) {
+		return RunInventoryItem{}, errors.New("run id must contain only lowercase letters, numbers, and hyphens")
+	}
+	path := filepath.Join(root, ".history", id+".json")
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		return RunInventoryItem{}, err
+	}
+	var item RunInventoryItem
+	if err := json.Unmarshal(contents, &item); err != nil {
+		return RunInventoryItem{}, fmt.Errorf("parse %s: %w", path, err)
+	}
+	item.Archived = true
+	return item, nil
 }
 
 func pinRun(root, selector string, pinned bool) (RunPinResult, error) {
@@ -391,6 +474,9 @@ func printRunInventory(out io.Writer, result RunsListResult) {
 		pin := ""
 		if run.Pinned {
 			pin = " pinned"
+		}
+		if run.Archived {
+			pin += " archived"
 		}
 		fmt.Fprintf(out, "%s  %-11s  %s  %dms  %d bytes%s\n", run.StartedAt.Format(time.RFC3339), run.Status, run.RunID, run.DurationMS, run.SizeBytes, pin)
 	}
