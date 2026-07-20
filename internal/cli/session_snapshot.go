@@ -157,6 +157,10 @@ func semanticSnapshotDelta(previous, current, target string, refreshInteractive 
 		}
 	}
 	sort.Strings(removed)
+	if actualChanged == 0 && len(removed) == 0 {
+		markSnapshotStructuralChanges(previousNodes, currentNodes, markChanged)
+		actualChanged = changedCount
+	}
 	meaningful := 0
 	for _, node := range currentNodes {
 		if node.Meaningful {
@@ -211,6 +215,56 @@ func semanticSnapshotDelta(previous, current, target string, refreshInteractive 
 		return full
 	}
 	return snapshotPresentation{Text: result, Mode: "delta", Omitted: omitted}
+}
+
+type snapshotStructurePosition struct {
+	Index  int
+	Parent string
+}
+
+func markSnapshotStructuralChanges(previous, current []snapshotTreeNode, mark func(int)) {
+	previousCounts := make(map[string]int)
+	currentCounts := make(map[string]int)
+	for _, node := range previous {
+		if node.Meaningful {
+			previousCounts[node.Normalized]++
+		}
+	}
+	for _, node := range current {
+		if node.Meaningful {
+			currentCounts[node.Normalized]++
+		}
+	}
+	positions := make(map[string]snapshotStructurePosition)
+	meaningfulIndex := 0
+	for index, node := range previous {
+		if !node.Meaningful {
+			continue
+		}
+		if previousCounts[node.Normalized] == 1 && currentCounts[node.Normalized] == 1 {
+			positions[node.Normalized] = snapshotStructurePosition{Index: meaningfulIndex, Parent: snapshotSemanticParent(previous, index)}
+		}
+		meaningfulIndex++
+	}
+	meaningfulIndex = 0
+	for index, node := range current {
+		if !node.Meaningful {
+			continue
+		}
+		if position, ok := positions[node.Normalized]; ok && (position.Index != meaningfulIndex || position.Parent != snapshotSemanticParent(current, index)) {
+			mark(index)
+		}
+		meaningfulIndex++
+	}
+}
+
+func snapshotSemanticParent(nodes []snapshotTreeNode, index int) string {
+	for parent := nodes[index].Parent; parent >= 0; parent = nodes[parent].Parent {
+		if nodes[parent].Meaningful && !strings.HasPrefix(nodes[parent].Normalized, "- generic") {
+			return nodes[parent].Normalized
+		}
+	}
+	return ""
 }
 
 func parseSnapshotTree(snapshot string, identities bool) []snapshotTreeNode {

@@ -89,6 +89,33 @@ func TestSemanticSnapshotNavigationDeltaRefreshesInteractiveRefs(t *testing.T) {
 	}
 }
 
+func TestSemanticSnapshotDeltaDetectsReorderAndParentMove(t *testing.T) {
+	before := `- main [ref=e1]:
+  - region "Backlog" [ref=e2]:
+    - button "Alpha" [ref=e3]
+    - button "Beta" [ref=e4]
+  - region "Done" [ref=e5]`
+	reordered := `- main [ref=f1]:
+  - region "Backlog" [ref=f2]:
+    - button "Beta" [ref=f4]
+    - button "Alpha" [ref=f3]
+  - region "Done" [ref=f5]`
+	delta := semanticSnapshotDelta(before, reordered, "", false)
+	if !strings.Contains(delta.Text, "Alpha") || !strings.Contains(delta.Text, "Beta") || strings.Contains(delta.Text, "No semantic changes") {
+		t.Fatalf("reorder delta:\n%s", delta.Text)
+	}
+
+	moved := `- main [ref=g1]:
+  - region "Backlog" [ref=g2]:
+    - button "Beta" [ref=g4]
+  - region "Done" [ref=g5]:
+    - button "Alpha" [ref=g3]`
+	delta = semanticSnapshotDelta(before, moved, "", false)
+	if !strings.Contains(delta.Text, `region "Done"`) || !strings.Contains(delta.Text, "Alpha") || strings.Contains(delta.Text, "No semantic changes") {
+		t.Fatalf("parent-move delta:\n%s", delta.Text)
+	}
+}
+
 func TestSemanticSnapshotNavigationDeltaFallsBackForNewPage(t *testing.T) {
 	previous := snapshotFixture("e", "Save")
 	current := "- main [ref=f1]:\n  - heading \"Different page\" [level=1] [ref=f2]\n  - link \"Continue\" [ref=f3]\n"

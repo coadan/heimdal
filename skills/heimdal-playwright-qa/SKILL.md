@@ -63,7 +63,8 @@ The first two support sessions; the last supports repository tests.
 actions return a semantic delta when it is smaller, with fresh refs for changed
 controls. Reloads and same-page navigation return fresh refs for every current
 control while omitting unchanged static content; materially different pages
-fall back to a full snapshot. Do not immediately call `observe` again. Prefer
+fall back to a full snapshot. Pure reordering and moves between meaningful
+regions count as changes. Do not immediately call `observe` again. Prefer
 current refs and user-facing locators over CSS, XPath, or coordinates. Add
 `--full` when the complete tree is needed and `--boxes` only for coordinate or
 layout work.
@@ -179,7 +180,14 @@ For an interactive failure, use one diagnostic packet:
 
 ```bash
 heimdal session diagnose --json
+heimdal session diagnose --stop --json
 ```
+
+The compact packet groups repeated console and request failures by signature
+and returns a semantic delta when the page has not changed. Use `--stop` only
+for the final inspection of a non-group session; it captures evidence before
+closing the browser and owned app, saving a separate lifecycle round trip.
+Stop multi-actor sessions with `session group stop`.
 
 For a deterministic run, inspect the live or final report before opening raw
 artifacts:

@@ -107,6 +107,17 @@ The default destination is $CODEX_HOME/skills/heimdal-playwright-qa.
 `
 
 func commandHelp(args []string) (string, bool) {
+	if len(args) >= 4 && args[0] == "help" && strings.EqualFold(args[1], "session") && strings.EqualFold(args[2], "group") {
+		return sessionGroupHelpForCommand(args[3]), true
+	}
+	if len(args) >= 3 && args[0] == "help" && strings.EqualFold(args[1], "session") {
+		return sessionHelpForCommand(args[2]), true
+	}
+	if len(args) >= 3 && args[0] == "help" {
+		if usage, ok := nestedHelpForCommand(args[1], args[2]); ok {
+			return usage, true
+		}
+	}
 	if len(args) >= 2 && args[0] == "help" {
 		return helpForCommand(args[1])
 	}
@@ -125,6 +136,26 @@ func commandHelp(args []string) (string, bool) {
 	}
 	if !wantsHelp {
 		return "", false
+	}
+	if strings.EqualFold(args[0], "session") && len(args) > 1 {
+		if args[1] == "--help" || args[1] == "-h" {
+			return sessionUsage, true
+		}
+		if strings.EqualFold(args[1], "help") {
+			if len(args) > 2 && !strings.HasPrefix(args[2], "-") {
+				return sessionHelpForCommand(args[2]), true
+			}
+			return sessionUsage, true
+		}
+		if strings.EqualFold(args[1], "group") && len(args) > 2 && !strings.HasPrefix(args[2], "-") {
+			return sessionGroupHelpForCommand(args[2]), true
+		}
+		return sessionHelpForCommand(args[1]), true
+	}
+	if len(args) > 1 {
+		if usage, ok := nestedHelpForCommand(args[0], args[1]); ok {
+			return usage, true
+		}
 	}
 	return helpForCommand(args[0])
 }

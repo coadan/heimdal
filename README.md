@@ -145,6 +145,11 @@ heimdal session save --name qa --test tests/browser/exploration.spec.ts
 heimdal session stop --name qa
 ```
 
+`session diagnose` groups recurring console and request failures into bounded
+signatures and returns a delta when the semantic page state is unchanged. On a
+final inspection, add `--stop` to collect the packet and close a non-group
+browser and its owned app in one command.
+
 Wait for user-visible state instead of polling snapshots or sleeping:
 
 ```bash
@@ -235,8 +240,9 @@ state-changing action returns only its semantic delta when that is smaller than
 the full state, while retaining the complete snapshot as an artifact. Reloads
 and other navigation actions also use a delta when the page remains
 substantially the same, but always include fresh refs for its current controls;
-a materially different page returns a full snapshot. Add `--full` when the
-complete semantic tree is needed.
+a materially different page returns a full snapshot. Reordering unique content
+or moving it between meaningful regions also counts as a change. Add `--full`
+when the complete semantic tree is needed.
 
 Known consecutive actions can share one agent round trip through a bounded JSON
 batch:

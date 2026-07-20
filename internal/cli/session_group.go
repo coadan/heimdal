@@ -78,6 +78,44 @@ Usage:
   heimdal session group report [--name GROUP] [--dir PATH] [--json]
 `
 
+var sessionGroupCommandUsage = map[string]string{
+	"start": `Start isolated Playwright actors against one shared app fixture
+
+Usage:
+  heimdal session group start --actors ACTOR,ACTOR [--name GROUP] [--dir PATH] [--headed] [--json]
+
+The first actor owns the configured app process. Two to eight sanitized,
+unique actors are supported; a partial start is rolled back automatically.
+`,
+	"status": `Inspect every actor and the shared app owner in a session group
+
+Usage:
+  heimdal session group status [--name GROUP] [--dir PATH] [--json]
+`,
+	"stop": `Stop every actor in a group, closing the shared app owner last
+
+Usage:
+  heimdal session group stop [--name GROUP] [--dir PATH] [--json]
+`,
+	"timeline": `Merge actor action evidence into one time-ordered timeline
+
+Usage:
+  heimdal session group timeline [--name GROUP] [--dir PATH] [--json]
+`,
+	"report": `Summarize combined actor actions, failures, and evidence
+
+Usage:
+  heimdal session group report [--name GROUP] [--dir PATH] [--json]
+`,
+}
+
+func sessionGroupHelpForCommand(command string) string {
+	if usage, ok := sessionGroupCommandUsage[strings.ToLower(command)]; ok {
+		return usage
+	}
+	return sessionGroupUsage
+}
+
 func runSessionGroup(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
 		fmt.Fprint(out, sessionGroupUsage)

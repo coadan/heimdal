@@ -107,6 +107,7 @@ type SessionResponse struct {
 	Session         string             `json:"session"`
 	Group           string             `json:"group,omitempty"`
 	Actor           string             `json:"actor,omitempty"`
+	Closed          bool               `json:"closed,omitempty"`
 	RunID           string             `json:"run_id,omitempty"`
 	Root            string             `json:"root,omitempty"`
 	URL             string             `json:"url,omitempty"`
@@ -133,6 +134,11 @@ type sessionSaveOptions struct {
 	SessionOptions
 	TestPath string
 	Ready    bool
+}
+
+type sessionDiagnoseOptions struct {
+	SessionOptions
+	Stop bool
 }
 
 type sessionBatchOptions struct {
@@ -677,7 +683,8 @@ func executeSessionActionPlan(ctx context.Context, project Project, state *Sessi
 }
 
 func runSessionDiagnose(ctx context.Context, args []string, out, errOut io.Writer) int {
-	options, err := parseSessionOptions(args)
+	diagnoseOptions, err := parseSessionDiagnoseOptions(args)
+	options := diagnoseOptions.SessionOptions
 	if err != nil {
 		return reportError(options.JSON, err, out, errOut)
 	}
@@ -714,13 +721,13 @@ func runSessionDiagnose(ctx context.Context, args []string, out, errOut io.Write
 		if options.Verbose {
 			output = append(output, fmt.Sprintf("$ %s\n%s", strings.Join(command, " "), joinOutputs(result.Stdout, result.Stderr)))
 		} else {
-			output = append(output, compactDiagnostic(command, result))
+			output = append(output, compactSessionDiagnosticOutput(command, result))
 		}
 	}
 	var view snapshotPresentation
 	if snapshot != "" {
 		var snapshotErr error
-		view, snapshotErr = storeSessionSnapshot(&state, statePath, snapshotResult.Sequence, snapshot, false, options.Full, "", false)
+		view, snapshotErr = storeSessionSnapshot(&state, statePath, snapshotResult.Sequence, snapshot, true, options.Full, "", false)
 		if firstErr == nil && snapshotErr != nil {
 			firstErr = snapshotErr
 		}
@@ -742,7 +749,47 @@ func runSessionDiagnose(ctx context.Context, args []string, out, errOut io.Write
 	} else {
 		response.Status = "passed"
 	}
+	if diagnoseOptions.Stop {
+		if state.Group != "" {
+			response.Status = "failed"
+			response.Error = "--stop cannot close one actor from a session group; use `heimdal session group stop`"
+			return printSessionResponse(out, errOut, response, options.JSON)
+		}
+		closeResult, closeErr := runSessionCommand(ctx, project, &state, statePath, []string{"close"}, "")
+		stopSessionServer(state.ServerPID)
+		stopped := time.Now().UTC()
+		state.StoppedAt = &stopped
+		closeErr = errors.Join(closeErr, writeSessionState(statePath, state), writeSessionIndex(state))
+		response.Closed = closeErr == nil
+		response.Server = "stopped"
+		if closeErr != nil {
+			response.Status = "failed"
+			response.Error = errors.Join(firstErr, closeErr).Error()
+		} else if options.Verbose {
+			response.Output = strings.TrimSpace(response.Output + "\n\n$ close\n" + joinOutputs(closeResult.Stdout, closeResult.Stderr))
+		} else {
+			response.Output = strings.TrimSpace(response.Output + "\n\nsession: closed")
+		}
+	}
 	return printSessionResponse(out, errOut, response, options.JSON)
+}
+
+func parseSessionDiagnoseOptions(args []string) (sessionDiagnoseOptions, error) {
+	options := sessionDiagnoseOptions{}
+	common := make([]string, 0, len(args))
+	for _, arg := range args {
+		if arg == "--stop" {
+			if options.Stop {
+				return options, errors.New("--stop may only be specified once")
+			}
+			options.Stop = true
+			continue
+		}
+		common = append(common, arg)
+	}
+	parsed, err := parseSessionOptions(common)
+	options.SessionOptions = parsed
+	return options, err
 }
 
 func runSessionSave(args []string, out, errOut io.Writer) int {
@@ -1545,15 +1592,6 @@ func compactCLIOutput(output string) string {
 	return truncateDisplay(output, 6000)
 }
 
-func compactDiagnostic(command []string, result sessionCommandResult) string {
-	label := strings.Join(command, " ")
-	output := compactCLIOutput(joinOutputs(result.Stdout, result.Stderr))
-	if output == "" {
-		return label + ": none"
-	}
-	return label + ":\n" + output
-}
-
 func diagnosticIssues(outputs ...string) []string {
 	var issues []string
 	for _, output := range outputs {
@@ -1671,6 +1709,7 @@ func compactSessionResponse(response SessionResponse) SessionResponse {
 		Session:         response.Session,
 		Group:           response.Group,
 		Actor:           response.Actor,
+		Closed:          response.Closed,
 		Action:          response.Action,
 		Command:         response.Command,
 		Output:          response.Output,
