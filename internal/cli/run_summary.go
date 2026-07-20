@@ -136,6 +136,23 @@ func failureContextExcerptInDirectory(root string) string {
 	return failureContextExcerpt([]string{contextPath})
 }
 
+func addRunTraceDiagnosis(result *RunResult, runDir string) {
+	if result.TraceDiagnosis != nil {
+		return
+	}
+	tracePath, err := findTrace(runDir)
+	if err != nil {
+		return
+	}
+	diagnosis, err := summarizeTrace(tracePath, result, 2)
+	if err != nil {
+		result.DiagnosisError = err.Error()
+		return
+	}
+	result.TraceDiagnosis = &diagnosis
+	result.NextCommand = "heimdal trace --run " + result.RunID
+}
+
 func liveRunProgress(manifest RunManifest, runDir string, now time.Time) RunProgress {
 	progress := RunProgress{ElapsedMS: now.Sub(manifest.StartedAt).Milliseconds()}
 	stdoutBytes, stdoutLast, stdoutModified := fileProgress(filepath.Join(runDir, "stdout.log"))

@@ -23,8 +23,10 @@ Treat only `passed` as passing evidence. Heimdal reports `skipped` with a
 nonzero exit when Playwright discovers tests but executes none. Run and report
 JSON expose structured test counts, a primary failure fingerprint, deduplicated
 warnings, artifact sizes, and a bounded Playwright failure-context excerpt; use
-those fields before reading log tails. A long JSON run emits progress on stderr,
-and `report --run ID --json` can be polled for structured live progress.
+those fields before reading log tails. Failed reports also fold in the retained
+trace's failing action, locator, nearby actions, and DOM excerpt when available.
+A long JSON run emits progress on stderr, and `report --run ID --json` can be
+polled for structured live progress.
 
 Use one persistent session for exploration:
 
@@ -115,13 +117,13 @@ artifacts:
 
 ```bash
 heimdal report --run latest --json
-heimdal trace inspect --run latest --around-failure
 ```
 
-Trace inspection is non-mutating and returns the failing action, nearby
-locators, bounded DOM excerpts, and artifact paths without opening a viewer.
-Inspect raw artifacts only when these summaries point to them. Never put
-secrets in commands, screenshots, traces, metadata, or generated tests.
+The report includes bounded trace diagnosis when available. Use `heimdal trace
+inspect --run latest --around-failure` only for a separate trace packet or a
+direct trace path. Inspect raw artifacts only when these summaries point to
+them. Never put secrets in commands, screenshots, traces, metadata, or
+generated tests.
 
 Use the indexed history before scanning `.heimdal` directly:
 

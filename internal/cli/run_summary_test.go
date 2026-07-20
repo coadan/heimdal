@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"archive/zip"
 	"context"
 	"encoding/json"
 	"io"
@@ -125,6 +126,53 @@ func TestFailureContextAndLiveProgressStayBounded(t *testing.T) {
 	progress := liveRunProgress(RunManifest{StartedAt: started}, runDir, started.Add(2*time.Second))
 	if progress.ElapsedMS != 2000 || progress.LastOutput != "warning" || progress.StdoutBytes == 0 || progress.StderrBytes == 0 {
 		t.Fatalf("progress = %#v", progress)
+	}
+}
+
+func TestFailedRunReportIncludesTraceDiagnosisWithoutFullFileIndex(t *testing.T) {
+	runDir := t.TempDir()
+	traceDir := filepath.Join(runDir, "test-results", "example")
+	if err := os.MkdirAll(traceDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tracePath := filepath.Join(traceDir, "trace.zip")
+	file, err := os.Create(tracePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	archive := zip.NewWriter(file)
+	events, err := archive.Create("test.trace")
+	if err != nil {
+		t.Fatal(err)
+	}
+	traceLines := strings.Join([]string{
+		`{"type":"before","callId":"call-1","startTime":10,"apiName":"locator.click","params":{"selector":"internal:role=button[name=Save]"}}`,
+		`{"type":"frame-snapshot","snapshot":{"callId":"call-1","snapshotName":"before@call-1","url":"http://127.0.0.1/settings","html":["HTML",{},["BODY",{},"Save changes"]]}}`,
+		`{"type":"after","callId":"call-1","endTime":20,"error":{"message":"expected enabled, received disabled"}}`,
+	}, "\n") + "\n"
+	if _, err := io.WriteString(events, traceLines); err != nil {
+		t.Fatal(err)
+	}
+	if err := archive.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	result := RunResult{SchemaVersion: 1, RunID: "failed-run", Status: "failed", ExitCode: 1, StartedAt: time.Now().UTC(), Failure: "exit status 1", Artifacts: Artifacts{RunDir: runDir}}
+	if err := writeJSON(filepath.Join(runDir, "result.json"), result); err != nil {
+		t.Fatal(err)
+	}
+	report, _, err := readRunReportDetailed(runDir, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	failed := report.(RunResult)
+	if failed.TraceDiagnosis == nil || failed.TraceDiagnosis.FailingAction == nil || !strings.Contains(failed.TraceDiagnosis.FailingAction.Error, "received disabled") || len(failed.TraceDiagnosis.Snapshots) != 1 {
+		t.Fatalf("trace diagnosis = %#v", failed.TraceDiagnosis)
+	}
+	if failed.Artifacts.Files != nil {
+		t.Fatalf("compact diagnosis scanned a public file index: %#v", failed.Artifacts.Files)
 	}
 }
 

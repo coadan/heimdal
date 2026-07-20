@@ -45,6 +45,8 @@ type RunResult struct {
 	ProcessError   string                     `json:"process_error,omitempty"`
 	PrimaryFailure *PrimaryFailure            `json:"primary_failure,omitempty"`
 	FailureContext string                     `json:"failure_context,omitempty"`
+	TraceDiagnosis *TraceSummary              `json:"trace_diagnosis,omitempty"`
+	DiagnosisError string                     `json:"diagnosis_error,omitempty"`
 	Tests          *TestCounts                `json:"tests,omitempty"`
 	Warnings       []RunWarning               `json:"warnings,omitempty"`
 	NextCommand    string                     `json:"next_command,omitempty"`
@@ -553,6 +555,9 @@ func readRunReportDetailed(runDir string, includeFiles bool) (any, int, error) {
 		}
 		if result.Status == "failed" && result.FailureContext == "" {
 			result.FailureContext = failureContextExcerptInDirectory(runDir)
+		}
+		if result.Status == "failed" {
+			addRunTraceDiagnosis(&result, runDir)
 		}
 		metadata, metadataErr := allCoordinationMetadata(runDir)
 		if metadataErr != nil {
