@@ -297,30 +297,31 @@ func runReport(args []string, out, errOut io.Writer) int {
 }
 
 func runTrace(ctx context.Context, args []string, out, errOut io.Writer) int {
-	root, runID, tracePath, err := parseTraceOptions(args)
+	options, err := parseTraceOptions(args)
 	if err != nil {
-		return reportError(false, err, out, errOut)
+		return reportError(options.JSON, err, out, errOut)
 	}
-	project, err := Discover(root)
+	if options.Help {
+		fmt.Fprint(out, traceUsage)
+		return 0
+	}
+	project, err := Discover(options.Root)
 	if err != nil {
-		return reportError(false, err, out, errOut)
+		return reportError(options.JSON, err, out, errOut)
 	}
-	if tracePath == "" {
-		var result RunResult
-		if runID == "" || runID == "latest" {
-			result, err = findLatestResult(artifactRoot(project, ""))
-		} else {
-			if !validArtifactID(runID) {
-				return reportError(false, errors.New("run id must contain only lowercase letters, numbers, and hyphens"), out, errOut)
-			}
-			result, err = readResult(filepath.Join(artifactRoot(project, ""), runID, "result.json"))
+	tracePath, result, err := resolveTrace(project, options.RunID, options.Trace)
+	if err != nil {
+		return reportError(options.JSON, err, out, errOut)
+	}
+	if options.JSON {
+		summary, err := summarizeTrace(tracePath, result, options.AroundFailure)
+		if err != nil {
+			return reportError(true, err, out, errOut)
 		}
-		if err == nil {
-			tracePath, err = findTrace(result.Artifacts.RunDir)
+		if err := writeJSONTo(out, summary); err != nil {
+			return reportError(true, err, out, errOut)
 		}
-	}
-	if err != nil {
-		return reportError(false, err, out, errOut)
+		return 0
 	}
 	command := append(project.Runner, "show-trace", tracePath)
 	fmt.Fprintf(out, "Opening trace: %s\n", tracePath)
@@ -577,39 +578,53 @@ func parseSimpleOptionsWithoutUnknown(args []string) (string, bool, error) {
 	return root, asJSON, nil
 }
 
-func parseTraceOptions(args []string) (string, string, string, error) {
-	root, runID := "", ""
-	trace := ""
+func parseTraceOptions(args []string) (traceOptions, error) {
+	options := traceOptions{AroundFailure: 2}
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
+		case "inspect":
+			if i != 0 || options.Inspect {
+				return options, errors.New("trace inspect must be the first argument")
+			}
+			options.Inspect = true
+			options.JSON = true
 		case "--dir", "--root":
 			flag := args[i]
 			value, next, err := nextValue(args, i, flag)
 			if err != nil {
-				return root, runID, trace, err
+				return options, err
 			}
 			i = next
-			if err := setDirectoryOption(&root, value, flag); err != nil {
-				return root, runID, trace, err
+			if err := setDirectoryOption(&options.Root, value, flag); err != nil {
+				return options, err
 			}
 		case "--run":
 			value, next, err := nextValue(args, i, "--run")
 			if err != nil {
-				return root, runID, trace, err
+				return options, err
 			}
 			i = next
-			runID = value
+			options.RunID = value
+		case "--json":
+			options.JSON = true
+		case "--around-failure":
+			options.AroundFailure = 2
+		case "--help", "-h":
+			options.Help = true
 		default:
 			if strings.HasPrefix(args[i], "-") {
-				return root, runID, trace, fmt.Errorf("unknown option %q", args[i])
+				return options, fmt.Errorf("unknown option %q", args[i])
 			}
-			if trace != "" {
-				return root, runID, trace, errors.New("only one trace path may be provided")
+			if options.Trace != "" {
+				return options, errors.New("only one trace path may be provided")
 			}
-			trace = args[i]
+			options.Trace = args[i]
 		}
 	}
-	return root, runID, trace, nil
+	if options.Trace != "" && options.RunID != "" {
+		return options, errors.New("trace path and --run cannot be used together")
+	}
+	return options, nil
 }
 
 func parseRootAndForward(args []string) (string, []string, error) {

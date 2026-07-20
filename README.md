@@ -74,8 +74,14 @@ is available through the same report command:
 
 ```bash
 heimdal report --run latest --json
-heimdal trace --run latest
+heimdal trace --run latest --json
 ```
+
+Trace JSON resolves the retained trace without opening a viewer and returns the
+failing action, nearby actions and locators, bounded DOM snapshot excerpts,
+run timing, and artifact indexes. Use `heimdal trace --run latest` without
+`--json` when a person needs Playwright's interactive viewer; `heimdal trace
+--help` documents both modes.
 
 Use `--run-id ID` when another process needs a stable run name. Run IDs contain
 lowercase letters, numbers, and hyphens.

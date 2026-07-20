@@ -91,11 +91,13 @@ artifacts:
 
 ```bash
 heimdal report --run latest --json
-heimdal trace --run latest
+heimdal trace inspect --run latest --around-failure
 ```
 
-Inspect raw artifacts only when the summary points to them. Never put secrets
-in commands, screenshots, traces, metadata, or generated tests.
+Trace inspection is non-mutating and returns the failing action, nearby
+locators, bounded DOM excerpts, and artifact paths without opening a viewer.
+Inspect raw artifacts only when these summaries point to them. Never put
+secrets in commands, screenshots, traces, metadata, or generated tests.
 
 `session save --test` creates a TypeScript draft, not a finished regression
 test. Replace TODO locators and add an assertion for the user-visible outcome.
