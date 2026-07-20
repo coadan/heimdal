@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 )
@@ -12,11 +11,6 @@ import (
 const (
 	defaultSnapshotBudgetBytes = 12 * 1024
 	defaultSnapshotBudgetNodes = 220
-)
-
-var (
-	snapshotRefPattern = regexp.MustCompile(`\s*\[ref=[^\]]+\]`)
-	snapshotBoxPattern = regexp.MustCompile(`\s*\[box=[^\]]+\]`)
 )
 
 type snapshotPresentation struct {
@@ -31,7 +25,6 @@ type snapshotTreeNode struct {
 	Normalized  string
 	Ref         string
 	Parent      int
-	Children    []int
 	Meaningful  bool
 	Interactive bool
 	Priority    int
@@ -65,7 +58,7 @@ func storeSessionSnapshot(state *SessionState, statePath string, sequence int, s
 }
 
 func semanticSnapshot(snapshot string) snapshotPresentation {
-	nodes := parseSnapshotTree(snapshot)
+	nodes := parseSnapshotTree(snapshot, false)
 	if len(nodes) == 0 {
 		text := truncateDisplay(strings.TrimSpace(snapshot), defaultSnapshotBudgetBytes)
 		if text == "" {
@@ -73,13 +66,11 @@ func semanticSnapshot(snapshot string) snapshotPresentation {
 		}
 		return snapshotPresentation{Text: text, Mode: "full"}
 	}
-	selected := selectSnapshotNodes(nodes, nil, false)
-	text, omitted := renderSnapshotSelection(nodes, selected)
-	return snapshotPresentation{Text: text, Mode: "full", Omitted: omitted}
+	return semanticSnapshotNodes(nodes, false)
 }
 
 func expandedSemanticSnapshot(snapshot string) snapshotPresentation {
-	nodes := parseSnapshotTree(snapshot)
+	nodes := parseSnapshotTree(snapshot, false)
 	if len(nodes) == 0 {
 		text := strings.TrimSpace(snapshot)
 		if text == "" {
@@ -87,16 +78,20 @@ func expandedSemanticSnapshot(snapshot string) snapshotPresentation {
 		}
 		return snapshotPresentation{Text: text, Mode: "full"}
 	}
-	selected := selectSnapshotNodes(nodes, nil, true)
+	return semanticSnapshotNodes(nodes, true)
+}
+
+func semanticSnapshotNodes(nodes []snapshotTreeNode, expanded bool) snapshotPresentation {
+	selected := selectSnapshotNodes(nodes, nil, expanded)
 	text, omitted := renderSnapshotSelection(nodes, selected)
 	return snapshotPresentation{Text: text, Mode: "full", Omitted: omitted}
 }
 
 func semanticSnapshotDelta(previous, current, target string, refreshInteractive bool) snapshotPresentation {
-	previousNodes := parseSnapshotTree(previous)
-	currentNodes := parseSnapshotTree(current)
+	previousNodes := parseSnapshotTree(previous, true)
+	currentNodes := parseSnapshotTree(current, true)
 	if len(previousNodes) == 0 || len(currentNodes) == 0 {
-		return semanticSnapshot(current)
+		return semanticSnapshotNodes(currentNodes, false)
 	}
 
 	previousCounts := make(map[string]int)
@@ -105,7 +100,14 @@ func semanticSnapshotDelta(previous, current, target string, refreshInteractive 
 			previousCounts[node.Normalized]++
 		}
 	}
-	changed := make(map[int]bool)
+	changed := make([]bool, len(currentNodes))
+	changedCount := 0
+	markChanged := func(index int) {
+		if !changed[index] {
+			changed[index] = true
+			changedCount++
+		}
+	}
 	for index, node := range currentNodes {
 		if !node.Meaningful {
 			continue
@@ -114,9 +116,9 @@ func semanticSnapshotDelta(previous, current, target string, refreshInteractive 
 			previousCounts[node.Normalized]--
 			continue
 		}
-		changed[index] = true
+		markChanged(index)
 	}
-	actualChanged := len(changed)
+	actualChanged := changedCount
 
 	if target != "" {
 		var targetIdentity string
@@ -140,7 +142,7 @@ func semanticSnapshotDelta(previous, current, target string, refreshInteractive 
 				if node.Normalized == targetIdentity {
 					occurrence++
 					if occurrence == targetOccurrence {
-						changed[index] = true
+						markChanged(index)
 						break
 					}
 				}
@@ -167,11 +169,11 @@ func semanticSnapshotDelta(previous, current, target string, refreshInteractive 
 	if refreshInteractive {
 		for index, node := range currentNodes {
 			if node.Interactive {
-				changed[index] = true
+				markChanged(index)
 			}
 		}
 	}
-	if len(changed) == 0 && len(removed) == 0 {
+	if changedCount == 0 && len(removed) == 0 {
 		return snapshotPresentation{Text: "No semantic changes.", Mode: "delta"}
 	}
 
@@ -204,21 +206,35 @@ func semanticSnapshotDelta(previous, current, target string, refreshInteractive 
 		}
 	}
 	result := strings.TrimSpace(output.String())
-	full := semanticSnapshot(current)
+	full := semanticSnapshotNodes(currentNodes, false)
 	if result == "" || len(result) >= len(full.Text) {
 		return full
 	}
 	return snapshotPresentation{Text: result, Mode: "delta", Omitted: omitted}
 }
 
-func parseSnapshotTree(snapshot string) []snapshotTreeNode {
-	var nodes []snapshotTreeNode
-	var stack []int
-	for _, raw := range strings.Split(strings.TrimSpace(snapshot), "\n") {
+func parseSnapshotTree(snapshot string, identities bool) []snapshotTreeNode {
+	snapshot = strings.TrimSpace(snapshot)
+	if snapshot == "" {
+		return nil
+	}
+	nodes := make([]snapshotTreeNode, 0, strings.Count(snapshot, "\n")+1)
+	stack := make([]int, 0, 16)
+	for snapshot != "" {
+		raw := snapshot
+		if end := strings.IndexByte(snapshot, '\n'); end >= 0 {
+			raw = snapshot[:end]
+			snapshot = snapshot[end+1:]
+		} else {
+			snapshot = ""
+		}
 		if strings.TrimSpace(raw) == "" {
 			continue
 		}
-		indent := len(raw) - len(strings.TrimLeft(raw, " "))
+		indent := 0
+		for indent < len(raw) && raw[indent] == ' ' {
+			indent++
+		}
 		depth := indent / 2
 		line := strings.TrimSpace(raw)
 		for len(stack) > depth {
@@ -228,31 +244,60 @@ func parseSnapshotTree(snapshot string) []snapshotTreeNode {
 		if len(stack) > 0 {
 			parent = stack[len(stack)-1]
 		}
-		normalized := normalizeSnapshotLine(line)
-		priority, interactive := snapshotNodePriority(normalized)
+		priority, interactive := snapshotNodePriority(line)
 		node := snapshotTreeNode{
 			Raw:         line,
-			Normalized:  normalized,
-			Ref:         snapshotRef(line),
 			Parent:      parent,
 			Meaningful:  priority > 0,
 			Interactive: interactive,
 			Priority:    priority,
 		}
+		if identities {
+			node.Normalized = normalizeSnapshotLine(line)
+			node.Ref = snapshotRef(line)
+		}
 		index := len(nodes)
 		nodes = append(nodes, node)
-		if parent >= 0 {
-			nodes[parent].Children = append(nodes[parent].Children, index)
-		}
 		stack = append(stack, index)
 	}
 	return nodes
 }
 
 func normalizeSnapshotLine(line string) string {
-	line = snapshotRefPattern.ReplaceAllString(line, "")
-	line = snapshotBoxPattern.ReplaceAllString(line, "")
-	return strings.Join(strings.Fields(line), " ")
+	var normalized strings.Builder
+	normalized.Grow(len(line))
+	wrote := false
+	space := false
+	for index := 0; index < len(line); {
+		if snapshotSpace(line[index]) {
+			space = wrote
+			index++
+			continue
+		}
+		if line[index] == '[' && (strings.HasPrefix(line[index:], "[ref=") || strings.HasPrefix(line[index:], "[box=")) {
+			if end := strings.IndexByte(line[index:], ']'); end >= 0 {
+				index += end + 1
+				continue
+			}
+		}
+		if space {
+			normalized.WriteByte(' ')
+			space = false
+		}
+		normalized.WriteByte(line[index])
+		wrote = true
+		index++
+	}
+	return normalized.String()
+}
+
+func snapshotSpace(value byte) bool {
+	switch value {
+	case ' ', '\t', '\n', '\r', '\v', '\f':
+		return true
+	default:
+		return false
+	}
 }
 
 func snapshotRef(line string) string {
@@ -270,8 +315,8 @@ func snapshotRef(line string) string {
 }
 
 func snapshotNodePriority(line string) (int, bool) {
-	lower := strings.ToLower(strings.TrimPrefix(line, "- "))
-	role := lower
+	content := strings.TrimPrefix(line, "- ")
+	role := content
 	if end := strings.IndexAny(role, " [:\""); end >= 0 {
 		role = role[:end]
 	}
@@ -286,20 +331,21 @@ func snapshotNodePriority(line string) (int, bool) {
 	if role != "generic" && role != "" {
 		return 2, false
 	}
-	if strings.Contains(lower, "[active]") || strings.Contains(lower, "[focused]") || strings.Contains(lower, "[checked]") {
+	if strings.Contains(content, "[active]") || strings.Contains(content, "[focused]") || strings.Contains(content, "[checked]") {
 		return 2, false
 	}
-	if strings.HasPrefix(strings.TrimPrefix(lower, "generic"), " \"") {
+	if strings.HasPrefix(strings.TrimPrefix(content, "generic"), " \"") {
 		return 1, false
 	}
-	if colon := strings.Index(lower, ":"); colon >= 0 && strings.TrimSpace(lower[colon+1:]) != "" {
+	if colon := strings.Index(content, ":"); colon >= 0 && strings.TrimSpace(content[colon+1:]) != "" {
 		return 1, false
 	}
 	return 0, false
 }
 
-func selectSnapshotNodes(nodes []snapshotTreeNode, candidates map[int]bool, expanded bool) map[int]bool {
-	selected := make(map[int]bool)
+func selectSnapshotNodes(nodes []snapshotTreeNode, candidates []bool, expanded bool) []bool {
+	selected := make([]bool, len(nodes))
+	selectedCount := 0
 	selectedBytes := 0
 	add := func(index int) bool {
 		var chain []int
@@ -310,11 +356,12 @@ func selectSnapshotNodes(nodes []snapshotTreeNode, candidates map[int]bool, expa
 		for _, current := range chain {
 			cost += len(nodes[current].Raw) + 2
 		}
-		if !expanded && (len(selected)+len(chain) > defaultSnapshotBudgetNodes || selectedBytes+cost > defaultSnapshotBudgetBytes) {
+		if !expanded && (selectedCount+len(chain) > defaultSnapshotBudgetNodes || selectedBytes+cost > defaultSnapshotBudgetBytes) {
 			return false
 		}
 		for _, current := range chain {
 			selected[current] = true
+			selectedCount++
 			selectedBytes += len(nodes[current].Raw) + 2
 		}
 		return true
@@ -330,29 +377,30 @@ func selectSnapshotNodes(nodes []snapshotTreeNode, candidates map[int]bool, expa
 	return selected
 }
 
-func renderSnapshotSelection(nodes []snapshotTreeNode, selected map[int]bool) (string, int) {
+func renderSnapshotSelection(nodes []snapshotTreeNode, selected []bool) (string, int) {
 	var output strings.Builder
 	selectedMeaningful := 0
 	meaningful := 0
-	var render func(int, int)
-	render = func(index, depth int) {
-		node := nodes[index]
+	selectedChildren := make([]int, len(nodes))
+	for index, node := range nodes {
+		if selected[index] && node.Parent >= 0 {
+			selectedChildren[node.Parent]++
+		}
+	}
+	childDepth := make([]int, len(nodes))
+	for index, node := range nodes {
 		if node.Meaningful {
 			meaningful++
 		}
+		depth := 0
+		if node.Parent >= 0 {
+			depth = childDepth[node.Parent]
+		}
 		if !selected[index] {
-			for _, child := range node.Children {
-				render(child, depth)
-			}
-			return
+			childDepth[index] = depth
+			continue
 		}
-		selectedChildren := 0
-		for _, child := range node.Children {
-			if selected[child] {
-				selectedChildren++
-			}
-		}
-		collapse := !node.Meaningful && selectedChildren == 1
+		collapse := !node.Meaningful && selectedChildren[index] == 1
 		if !collapse {
 			output.WriteString(strings.Repeat("  ", depth))
 			output.WriteString(node.Raw)
@@ -362,14 +410,7 @@ func renderSnapshotSelection(nodes []snapshotTreeNode, selected map[int]bool) (s
 			}
 			depth++
 		}
-		for _, child := range node.Children {
-			render(child, depth)
-		}
-	}
-	for index, node := range nodes {
-		if node.Parent < 0 {
-			render(index, 0)
-		}
+		childDepth[index] = depth
 	}
 	omitted := meaningful - selectedMeaningful
 	if omitted > 0 {

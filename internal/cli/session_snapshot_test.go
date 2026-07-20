@@ -27,6 +27,20 @@ func TestSemanticSnapshotPreservesDeepControlsAndCollapsesWrappers(t *testing.T)
 	}
 }
 
+func TestNormalizeSnapshotLine(t *testing.T) {
+	tests := map[string]string{
+		`  - button "Save"   [ref=e2] [box={"x":1}]  `: `- button "Save"`,
+		"- textbox\t\"Name\"\t[ref=e3]":                `- textbox "Name"`,
+		`- paragraph: before[ref=e4] after`:            `- paragraph: before after`,
+		`- paragraph [ref=unfinished`:                  `- paragraph [ref=unfinished`,
+	}
+	for input, expected := range tests {
+		if actual := normalizeSnapshotLine(input); actual != expected {
+			t.Errorf("normalizeSnapshotLine(%q) = %q, want %q", input, actual, expected)
+		}
+	}
+}
+
 func TestSemanticSnapshotDeltaReturnsChangedRefsAndContent(t *testing.T) {
 	previous := snapshotFixture("e", "Switch to dark theme")
 	current := snapshotFixture("f", "Switch to light theme")
