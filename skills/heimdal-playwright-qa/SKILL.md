@@ -19,6 +19,11 @@ heimdal doctor
 heimdal run -- tests/browser/<flow>.spec.ts --grep "<behavior>"
 ```
 
+Treat only `passed` as passing evidence. Heimdal reports `skipped` with a
+nonzero exit when Playwright discovers tests but executes none. Run and report
+JSON expose structured test counts, a primary failure fingerprint, deduplicated
+warnings, and artifact sizes; use those fields before reading log tails.
+
 Use one persistent session for exploration:
 
 ```bash

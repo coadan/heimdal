@@ -22,11 +22,12 @@ type Config struct {
 }
 
 type PlaywrightConfig struct {
-	Config   string            `json:"config,omitempty"`
-	Runner   []string          `json:"runner,omitempty"`
-	RunIDEnv string            `json:"run_id_env,omitempty"`
-	PortEnv  string            `json:"port_env,omitempty"`
-	Env      map[string]string `json:"env,omitempty"`
+	Config        string            `json:"config,omitempty"`
+	Runner        []string          `json:"runner,omitempty"`
+	RunIDEnv      string            `json:"run_id_env,omitempty"`
+	PortEnv       string            `json:"port_env,omitempty"`
+	Env           map[string]string `json:"env,omitempty"`
+	ProvenanceEnv []string          `json:"provenance_env,omitempty"`
 }
 
 // SessionConfig describes the project-specific part of an interactive

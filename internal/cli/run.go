@@ -28,25 +28,32 @@ type RunOptions struct {
 }
 
 type RunResult struct {
-	SchemaVersion int                        `json:"schema_version"`
-	RunID         string                     `json:"run_id"`
-	Status        string                     `json:"status"`
-	ExitCode      int                        `json:"exit_code"`
-	StartedAt     time.Time                  `json:"started_at"`
-	FinishedAt    time.Time                  `json:"finished_at"`
-	DurationMS    int64                      `json:"duration_ms"`
-	Root          string                     `json:"root"`
-	Branch        string                     `json:"branch"`
-	Command       []string                   `json:"command"`
-	CommandLine   string                     `json:"command_line"`
-	Playwright    string                     `json:"playwright_config,omitempty"`
-	Port          int                        `json:"port,omitempty"`
-	Failure       string                     `json:"failure,omitempty"`
-	StdoutTail    string                     `json:"stdout_tail,omitempty"`
-	StderrTail    string                     `json:"stderr_tail,omitempty"`
-	Artifacts     Artifacts                  `json:"artifacts"`
-	Metadata      map[string]json.RawMessage `json:"metadata,omitempty"`
-	MetadataError string                     `json:"metadata_error,omitempty"`
+	SchemaVersion  int                        `json:"schema_version"`
+	RunID          string                     `json:"run_id"`
+	Status         string                     `json:"status"`
+	ExitCode       int                        `json:"exit_code"`
+	StartedAt      time.Time                  `json:"started_at"`
+	FinishedAt     time.Time                  `json:"finished_at"`
+	DurationMS     int64                      `json:"duration_ms"`
+	Root           string                     `json:"root"`
+	Branch         string                     `json:"branch"`
+	Command        []string                   `json:"command"`
+	CommandLine    string                     `json:"command_line"`
+	Playwright     string                     `json:"playwright_config,omitempty"`
+	Port           int                        `json:"port,omitempty"`
+	Failure        string                     `json:"failure,omitempty"`
+	ProcessError   string                     `json:"process_error,omitempty"`
+	PrimaryFailure *PrimaryFailure            `json:"primary_failure,omitempty"`
+	Tests          *TestCounts                `json:"tests,omitempty"`
+	Warnings       []RunWarning               `json:"warnings,omitempty"`
+	NextCommand    string                     `json:"next_command,omitempty"`
+	Invocation     RunInvocation              `json:"invocation"`
+	Environment    []RunEnvironmentVariable   `json:"environment,omitempty"`
+	StdoutTail     string                     `json:"stdout_tail,omitempty"`
+	StderrTail     string                     `json:"stderr_tail,omitempty"`
+	Artifacts      Artifacts                  `json:"artifacts"`
+	Metadata       map[string]json.RawMessage `json:"metadata,omitempty"`
+	MetadataError  string                     `json:"metadata_error,omitempty"`
 }
 
 // RunManifest is written as soon as Playwright starts so report and
@@ -65,19 +72,24 @@ type RunManifest struct {
 	CommandLine   string                     `json:"command_line"`
 	Playwright    string                     `json:"playwright_config,omitempty"`
 	Port          int                        `json:"port,omitempty"`
+	Invocation    RunInvocation              `json:"invocation"`
+	Environment   []RunEnvironmentVariable   `json:"environment,omitempty"`
 	Artifacts     Artifacts                  `json:"artifacts"`
 	Metadata      map[string]json.RawMessage `json:"metadata,omitempty"`
 	MetadataError string                     `json:"metadata_error,omitempty"`
 }
 
 type Artifacts struct {
-	RunDir     string   `json:"run_dir"`
-	Stdout     string   `json:"stdout"`
-	Stderr     string   `json:"stderr"`
-	Result     string   `json:"result"`
-	TestOutput string   `json:"test_output"`
-	Report     string   `json:"report"`
-	Files      []string `json:"files,omitempty"`
+	RunDir          string   `json:"run_dir"`
+	Stdout          string   `json:"stdout"`
+	Stderr          string   `json:"stderr"`
+	Result          string   `json:"result"`
+	TestOutput      string   `json:"test_output"`
+	Report          string   `json:"report"`
+	Files           []string `json:"files,omitempty"`
+	RunBytes        int64    `json:"run_bytes,omitempty"`
+	TestOutputBytes int64    `json:"test_output_bytes,omitempty"`
+	ReportBytes     int64    `json:"report_bytes,omitempty"`
 }
 
 func executeRun(ctx context.Context, project Project, options RunOptions, out, errOut io.Writer) (RunResult, error) {
@@ -125,6 +137,7 @@ func executeRun(ctx context.Context, project Project, options RunOptions, out, e
 		}
 	}
 	env := runEnvironment(project, runID, runDir, testOutput, report, port)
+	environment := runEnvironmentProvenance(project.Config.Playwright, env)
 	forwarded := append([]string(nil), options.Forwarded...)
 	if options.Headed && !containsFlag(forwarded, "--headed") {
 		forwarded = append(forwarded, "--headed")
@@ -173,6 +186,8 @@ func executeRun(ctx context.Context, project Project, options RunOptions, out, e
 			CommandLine:   commandString(command),
 			Playwright:    project.PlaywrightConfig,
 			Port:          port,
+			Invocation:    parseRunInvocation(options.Forwarded),
+			Environment:   environment,
 			Artifacts: Artifacts{
 				RunDir:     runDir,
 				Stdout:     stdoutPath,
@@ -204,6 +219,8 @@ func executeRun(ctx context.Context, project Project, options RunOptions, out, e
 		CommandLine:   commandString(command),
 		Playwright:    project.PlaywrightConfig,
 		Port:          port,
+		Invocation:    parseRunInvocation(options.Forwarded),
+		Environment:   environment,
 		StdoutTail:    stdoutTail.String(),
 		StderrTail:    stderrTail.String(),
 		Artifacts: Artifacts{
@@ -227,11 +244,20 @@ func executeRun(ctx context.Context, project Project, options RunOptions, out, e
 			result.Failure = ctx.Err().Error()
 		}
 	}
+	enrichRunResult(&result)
 	result.Metadata, err = allCoordinationMetadata(runDir)
 	if err != nil {
 		result.MetadataError = err.Error()
 	}
 	result.Artifacts.Files = artifactFiles(runDir)
+	if result.Status == "failed" {
+		if _, traceErr := findTrace(runDir); traceErr != nil {
+			result.NextCommand = ""
+		}
+	}
+	result.Artifacts.RunBytes = directoryBytes(runDir)
+	result.Artifacts.TestOutputBytes = directoryBytes(testOutput)
+	result.Artifacts.ReportBytes = directoryBytes(report)
 	if err := writeJSON(result.Artifacts.Result, result); err != nil {
 		return result, err
 	}

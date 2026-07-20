@@ -32,6 +32,7 @@ Heimdal requires Go 1.26 or later and a project that Playwright supports.
 
 ```bash
 go install github.com/coadan/heimdal/cmd/heimdal@latest
+heimdal --version
 heimdal skill install
 ```
 
@@ -66,6 +67,13 @@ Pass Playwright arguments after `--`:
 ```bash
 heimdal run -- tests/browser/example.spec.ts --grep "opens the menu"
 ```
+
+Run JSON includes parsed test counts, invocation selectors, deduplicated
+warnings, artifact sizes, and a fingerprinted primary failure when available.
+If Playwright discovers tests but executes none, Heimdal returns status
+`skipped` with a nonzero exit instead of treating the run as passing.
+`heimdal report --json` omits raw log tails and long file inventories by
+default; use `--json=full` when that retained detail is required inline.
 
 Each run gets an isolated artifact directory under `.dev/heimdal/` by default.
 The final JSON result, stdout, stderr, Playwright output, report, screenshots,
@@ -155,7 +163,8 @@ interactive QA can use this shape:
   "playwright": {
     "config": "playwright.config.ts",
     "run_id_env": "HEIMDAL_RUN_ID",
-    "port_env": "PORT"
+    "port_env": "PORT",
+    "provenance_env": ["BROWSER_FIXTURE_ENABLED"]
   },
   "session": {
     "command": ["npm", "run", "dev", "--", "--port", "${PORT}"],
@@ -171,6 +180,8 @@ interactive QA can use this shape:
 
 Heimdal allocates a free port when a run or session needs one. `${PORT}` and
 other configured environment templates are expanded for the app command.
+`provenance_env` records only each listed variable's name and set/unset state
+in run evidence; values are never persisted.
 
 ## Coordinate with a running test
 

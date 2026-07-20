@@ -15,6 +15,7 @@ import (
 const usage = `Heimdal — agent-oriented Playwright orchestration
 
 Usage:
+  heimdal version
   heimdal doctor [--dir PATH] [--json]
   heimdal init [--dir PATH] [--force]
   heimdal run [options] [-- PLAYWRIGHT_ARGS...]
@@ -71,6 +72,10 @@ Examples:
 `
 
 func Run(ctx context.Context, args []string, out, errOut io.Writer) int {
+	if len(args) > 0 && (args[0] == "version" || args[0] == "--version") {
+		fmt.Fprintln(out, heimdalVersion())
+		return 0
+	}
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
 		fmt.Fprint(out, usage)
 		return 0
@@ -254,7 +259,7 @@ func runInit(args []string, out, errOut io.Writer) int {
 }
 
 func runReport(args []string, out, errOut io.Writer) int {
-	root, asJSON, runID, err := parseReportOptions(args)
+	root, asJSON, fullJSON, runID, err := parseReportOptions(args)
 	if err != nil {
 		return reportError(asJSON, err, out, errOut)
 	}
@@ -271,6 +276,9 @@ func runReport(args []string, out, errOut io.Writer) int {
 		return reportError(asJSON, err, out, errOut)
 	}
 	if asJSON {
+		if !fullJSON {
+			report = compactRunReport(report)
+		}
 		_ = writeJSONTo(out, report)
 	} else {
 		switch value := report.(type) {
@@ -528,23 +536,38 @@ func parseInitOptions(args []string) (string, bool, error) {
 	return root, force, nil
 }
 
-func parseReportOptions(args []string) (string, bool, string, error) {
-	root, asJSON, err := parseSimpleOptionsWithoutUnknown(args)
-	if err != nil {
-		return root, asJSON, "", err
-	}
-	runID := ""
+func parseReportOptions(args []string) (string, bool, bool, string, error) {
+	root, asJSON, fullJSON, runID := "", false, false, ""
 	for i := 0; i < len(args); i++ {
-		if args[i] == "--run" {
+		switch args[i] {
+		case "--dir", "--root":
+			flag := args[i]
+			value, next, err := nextValue(args, i, flag)
+			if err != nil {
+				return root, asJSON, fullJSON, runID, err
+			}
+			i = next
+			if err := setDirectoryOption(&root, value, flag); err != nil {
+				return root, asJSON, fullJSON, runID, err
+			}
+		case "--json":
+			asJSON = true
+		case "--json=full":
+			asJSON, fullJSON = true, true
+		case "--run":
 			value, next, nextErr := nextValue(args, i, "--run")
 			if nextErr != nil {
-				return root, asJSON, runID, nextErr
+				return root, asJSON, fullJSON, runID, nextErr
 			}
 			i = next
 			runID = value
+		case "--help", "-h":
+			return root, asJSON, fullJSON, runID, errors.New(usage)
+		default:
+			return root, asJSON, fullJSON, runID, fmt.Errorf("unknown option %q", args[i])
 		}
 	}
-	return root, asJSON, runID, nil
+	return root, asJSON, fullJSON, runID, nil
 }
 
 func parseSimpleOptionsWithoutUnknown(args []string) (string, bool, error) {
