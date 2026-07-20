@@ -54,7 +54,7 @@ Session options:
   --browser NAME   Browser engine/channel for Playwright CLI
   --persistent     Keep browser profile on disk
   --no-server      Do not start the configured session command
-  --no-boxes       Omit bounding boxes from snapshots
+  --boxes          Include bounding boxes for coordinate-based inspection
   --verbose        Show complete Playwright CLI output
   --force          Replace an existing Heimdal session state
 
@@ -148,20 +148,25 @@ func runDoctor(args []string, out, errOut io.Writer) int {
 	report.ArtifactRoot = artifactRoot(project, "")
 	version, versionErr := runCapture(project.Root, append(project.Runner, "--version"), baseEnvironment())
 	if versionErr != nil {
-		report.Status = "error"
-		report.Error = fmt.Sprintf("Playwright is not runnable: %s", versionErr)
+		report.Warnings = append(report.Warnings, "repository Playwright is not runnable; deterministic run and list commands require a project Playwright install")
 	} else {
+		report.PlaywrightReady = true
 		report.PlaywrightVersion = version
 	}
 	if len(project.AgentRunner) > 0 {
 		agentVersion, agentErr := runCapture(project.Root, append(project.AgentRunner, "--version"), baseEnvironment())
 		if agentErr != nil {
-			report.Warnings = append(report.Warnings, "playwright-cli is not available; run `heimdal install agent-cli`")
+			report.Warnings = append(report.Warnings, "playwright-cli is not available; interactive sessions require `heimdal install agent-cli`")
 		} else {
+			report.SessionReady = true
 			report.AgentVersion = agentVersion
 		}
 	} else {
-		report.Warnings = append(report.Warnings, "playwright-cli is not available; run `heimdal install agent-cli`")
+		report.Warnings = append(report.Warnings, "playwright-cli is not available; interactive sessions require `heimdal install agent-cli`")
+	}
+	if !report.PlaywrightReady && !report.SessionReady {
+		report.Status = "error"
+		report.Error = "neither repository Playwright tests nor interactive Playwright sessions are runnable"
 	}
 	if report.PlaywrightConfig == "" {
 		report.Warnings = append(report.Warnings, "no playwright.config.* found; Playwright defaults will be used")
@@ -179,6 +184,8 @@ type DoctorReport struct {
 	PackageManager    string   `json:"package_manager,omitempty"`
 	Runner            []string `json:"runner,omitempty"`
 	AgentRunner       []string `json:"agent_runner,omitempty"`
+	PlaywrightReady   bool     `json:"playwright_ready"`
+	SessionReady      bool     `json:"session_ready"`
 	PlaywrightVersion string   `json:"playwright_version,omitempty"`
 	AgentVersion      string   `json:"agent_cli_version,omitempty"`
 	ArtifactRoot      string   `json:"artifact_root,omitempty"`
@@ -198,8 +205,26 @@ func printDoctor(report DoctorReport, asJSON bool, out, errOut io.Writer, exitCo
 		}
 		return exitCode
 	}
-	fmt.Fprintf(out, "Heimdal doctor: ready (%s)\n", report.Branch)
-	fmt.Fprintf(out, "  root: %s\n  Playwright: %s\n  artifacts: %s\n", report.Root, report.PlaywrightVersion, report.ArtifactRoot)
+	capabilities := make([]string, 0, 2)
+	if report.PlaywrightReady {
+		capabilities = append(capabilities, "tests")
+	}
+	if report.SessionReady {
+		capabilities = append(capabilities, "sessions")
+	}
+	fmt.Fprintf(out, "Heimdal doctor: ready (%s; %s)\n", report.Branch, strings.Join(capabilities, ", "))
+	fmt.Fprintf(out, "  root: %s\n", report.Root)
+	if report.PlaywrightReady {
+		fmt.Fprintf(out, "  Playwright tests: %s\n", report.PlaywrightVersion)
+	} else {
+		fmt.Fprintln(out, "  Playwright tests: unavailable")
+	}
+	if report.SessionReady {
+		fmt.Fprintf(out, "  Playwright sessions: %s\n", report.AgentVersion)
+	} else {
+		fmt.Fprintln(out, "  Playwright sessions: unavailable")
+	}
+	fmt.Fprintf(out, "  artifacts: %s\n", report.ArtifactRoot)
 	for _, warning := range report.Warnings {
 		fmt.Fprintf(out, "  warning: %s\n", warning)
 	}

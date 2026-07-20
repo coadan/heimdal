@@ -39,7 +39,7 @@ type SessionOptions struct {
 	Browser    string
 	NoServer   bool
 	Force      bool
-	NoBoxes    bool
+	Boxes      bool
 	Verbose    bool
 	Timeout    time.Duration
 	Forwarded  []string
@@ -184,7 +184,8 @@ Start options:
   --profile DIR    Persistent browser profile directory
   --browser NAME   Playwright browser engine/channel
   --no-server      Skip the configured session.command
-  --no-boxes       Omit bounding boxes from snapshots
+  --boxes          Include bounding boxes in snapshots for coordinate work
+  --no-boxes       Compatibility alias for the default semantic snapshots
   --verbose        Include full Playwright CLI output; default output is compact
   --force          Replace existing Heimdal session state
   --json           Print only agent-readable JSON
@@ -330,8 +331,16 @@ func startSession(ctx context.Context, project Project, options SessionOptions, 
 		return printSessionResponse(out, errOut, response, options.JSON)
 	}
 
-	observeArgs := sessionSnapshotArgs(options.NoBoxes, options.Verbose, nil)
-	observe, observeErr := runSessionCommandMode(ctx, project, &state, statePath, observeArgs, "", !options.Verbose)
+	observe := open
+	observeErr := openErr
+	snapshot, reusedSnapshot := emittedSessionSnapshot(project, state, open.Stdout)
+	if options.Verbose || options.Boxes || !reusedSnapshot {
+		observeArgs := sessionSnapshotArgs(options.Boxes, options.Verbose, nil)
+		observe, observeErr = runSessionCommandMode(ctx, project, &state, statePath, observeArgs, "", !options.Verbose)
+		if !options.Verbose {
+			snapshot = compactSessionSnapshot(observe.Stdout)
+		}
+	}
 	if observeErr != nil {
 		stopSessionResources(ctx, project, state)
 		markSessionStopped(statePath, &state)
@@ -342,7 +351,7 @@ func startSession(ctx context.Context, project Project, options SessionOptions, 
 		response.Output = joinOutputs(open.Stdout, observe.Stdout)
 	} else {
 		response.Output = fmt.Sprintf("opened %s", state.URL)
-		response.Snapshot = observe.Stdout
+		response.Snapshot = snapshot
 	}
 	if observeErr != nil {
 		response.Status = "failed"
@@ -432,7 +441,7 @@ func runSessionAction(ctx context.Context, action string, args []string, out, er
 
 	logicalArgs := append([]string{action}, options.Forwarded...)
 	if action == "snapshot" {
-		logicalArgs = sessionSnapshotArgs(options.NoBoxes, options.Verbose, options.Forwarded)
+		logicalArgs = sessionSnapshotArgs(options.Boxes, options.Verbose, options.Forwarded)
 	}
 	locator := ""
 	if isLocatorAction(action, logicalArgs) {
@@ -443,16 +452,22 @@ func runSessionAction(ctx context.Context, action string, args []string, out, er
 	stderr := result.Stderr
 	var snapshot string
 	if commandErr == nil && shouldObserveAfterSessionAction(action) {
-		observationArgs := sessionSnapshotArgs(options.NoBoxes, options.Verbose, nil)
-		observation, observationErr := runSessionCommandMode(ctx, project, &state, statePath, observationArgs, "", !options.Verbose)
-		if options.Verbose {
-			output = joinOutputs(output, observation.Stdout)
-		} else {
-			snapshot = observation.Stdout
+		reusedSnapshot := false
+		if !options.Verbose && !options.Boxes {
+			snapshot, reusedSnapshot = emittedSessionSnapshot(project, state, result.Stdout)
 		}
-		stderr = joinOutputs(stderr, observation.Stderr)
-		if observationErr != nil {
-			commandErr = fmt.Errorf("post-action observation failed: %w", observationErr)
+		if !reusedSnapshot {
+			observationArgs := sessionSnapshotArgs(options.Boxes, options.Verbose, nil)
+			observation, observationErr := runSessionCommandMode(ctx, project, &state, statePath, observationArgs, "", !options.Verbose)
+			if options.Verbose {
+				output = joinOutputs(output, observation.Stdout)
+			} else {
+				snapshot = compactSessionSnapshot(observation.Stdout)
+			}
+			stderr = joinOutputs(stderr, observation.Stderr)
+			if observationErr != nil {
+				commandErr = fmt.Errorf("post-action observation failed: %w", observationErr)
+			}
 		}
 	}
 	response := sessionResponse(state, result, commandErr)
@@ -467,7 +482,7 @@ func runSessionAction(ctx context.Context, action string, args []string, out, er
 	}
 	if action == "snapshot" && !options.Verbose {
 		response.Output = "observed"
-		response.Snapshot = result.Stdout
+		response.Snapshot = compactSessionSnapshot(result.Stdout)
 	}
 	if commandErr != nil {
 		response.Status = "failed"
@@ -493,7 +508,7 @@ func runSessionDiagnose(ctx context.Context, args []string, out, errOut io.Write
 		return reportError(options.JSON, fmt.Errorf("session %q is stopped", state.Name), out, errOut)
 	}
 
-	commands := [][]string{{"console", "error"}, {"requests"}, sessionSnapshotArgs(options.NoBoxes, options.Verbose, nil)}
+	commands := [][]string{{"console", "error"}, {"requests"}, sessionSnapshotArgs(options.Boxes, options.Verbose, nil)}
 	var output []string
 	var snapshot string
 	var last sessionCommandResult
@@ -639,8 +654,10 @@ func parseSessionOptions(args []string) (SessionOptions, error) {
 			options.NoServer = true
 		case "--force":
 			options.Force = true
+		case "--boxes":
+			options.Boxes = true
 		case "--no-boxes":
-			options.NoBoxes = true
+			options.Boxes = false
 		case "--verbose":
 			options.Verbose = true
 		case "--timeout-ms":
@@ -711,10 +728,10 @@ func sessionServerPlan(project Project, options SessionOptions, name, runID, run
 	return url, port, command, nil
 }
 
-func sessionSnapshotArgs(noBoxes, verbose bool, forwarded []string) []string {
+func sessionSnapshotArgs(boxes, verbose bool, forwarded []string) []string {
 	args := []string{"snapshot"}
 	args = append(args, forwarded...)
-	if !noBoxes {
+	if boxes {
 		if !containsFlag(forwarded, "--boxes") {
 			args = append(args, "--boxes")
 		}
@@ -723,6 +740,51 @@ func sessionSnapshotArgs(noBoxes, verbose bool, forwarded []string) []string {
 		args = append(args, fmt.Sprintf("--depth=%d", defaultSnapshotDepth))
 	}
 	return args
+}
+
+func emittedSessionSnapshot(project Project, state SessionState, output string) (string, bool) {
+	const marker = "[Snapshot]("
+	for _, line := range strings.Split(output, "\n") {
+		start := strings.Index(line, marker)
+		if start < 0 {
+			continue
+		}
+		value := line[start+len(marker):]
+		end := strings.IndexByte(value, ')')
+		if end < 0 {
+			continue
+		}
+		path := strings.TrimSpace(value[:end])
+		if path == "" {
+			continue
+		}
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(project.Root, filepath.FromSlash(path))
+		}
+		path = filepath.Clean(path)
+		relative, err := filepath.Rel(state.SessionDir, path)
+		if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+			continue
+		}
+		contents, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		return compactSessionSnapshot(string(contents)), true
+	}
+	return "", false
+}
+
+func compactSessionSnapshot(snapshot string) string {
+	lines := strings.Split(strings.TrimSpace(snapshot), "\n")
+	kept := lines[:0]
+	for _, line := range lines {
+		indent := len(line) - len(strings.TrimLeft(line, " "))
+		if indent/2 <= defaultSnapshotDepth {
+			kept = append(kept, line)
+		}
+	}
+	return truncateDisplay(strings.Join(kept, "\n"), 16*1024)
 }
 
 func sessionTemplateValues(project Project, name, runID, runDir string, port int, configuredURL string) map[string]string {
@@ -923,7 +985,10 @@ func normalizeGeneratedLocator(output string) string {
 			continue
 		}
 		if index := strings.Index(line, "page."); index >= 0 {
-			return strings.TrimSpace(line[index:])
+			locator := strings.TrimSpace(line[index:])
+			if strings.Contains(locator, "(") {
+				return locator
+			}
 		}
 		if strings.HasPrefix(line, "getBy") {
 			return "page." + line
@@ -1195,6 +1260,18 @@ func compactSessionArgs(args []string) []string {
 		if len(compact) > 1 {
 			compact[1] = fmt.Sprintf("<text:%d chars>", len(compact[1]))
 		}
+	case "eval":
+		if len(compact) > 1 {
+			compact[1] = fmt.Sprintf("<function:%d chars>", len(compact[1]))
+		}
+	case "run-code":
+		if len(compact) > 1 {
+			compact[1] = fmt.Sprintf("<code:%d chars>", len(compact[1]))
+		}
+	case "cookie-set", "localstorage-set", "sessionstorage-set":
+		if len(compact) > 2 {
+			compact[2] = fmt.Sprintf("<value:%d chars>", len(compact[2]))
+		}
 	}
 	return compact
 }
@@ -1305,16 +1382,19 @@ func printSessionResponse(out, errOut io.Writer, response SessionResponse, asJSO
 			fmt.Fprintln(errOut)
 		}
 	}
-	fmt.Fprintf(out, "Heimdal session %s: %s\n", response.Session, response.Status)
+	fmt.Fprintf(out, "Heimdal session %s: %s", response.Session, response.Status)
 	if response.Action > 0 {
-		fmt.Fprintf(out, "  action: %d\n", response.Action)
+		fmt.Fprintf(out, " (action %d)", response.Action)
 	}
-	if response.URL != "" {
-		fmt.Fprintf(out, "  url: %s\n", response.URL)
-	}
-	fmt.Fprintf(out, "  artifacts: %s\n", response.Artifacts["directory"])
-	if response.Server != "" {
-		fmt.Fprintf(out, "  server: %s\n", response.Server)
+	fmt.Fprintln(out)
+	if response.Status != "passed" && response.Status != "stopped" {
+		if response.URL != "" {
+			fmt.Fprintf(out, "  url: %s\n", response.URL)
+		}
+		fmt.Fprintf(out, "  artifacts: %s\n", response.Artifacts["directory"])
+		if response.Server != "" {
+			fmt.Fprintf(out, "  server: %s\n", response.Server)
+		}
 	}
 	for _, issue := range response.Issues {
 		fmt.Fprintf(errOut, "heimdal: issue: %s\n", issue)

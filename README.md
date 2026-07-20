@@ -32,11 +32,13 @@ go install github.com/coadan/heimdal/cmd/heimdal@latest
 heimdal skill install
 ```
 
-Install the official Playwright agent CLI and a browser in the project when
-needed:
+For interactive sessions, install the official Playwright agent CLI and its
+browser. Install the repository-owned browser separately when deterministic
+tests need it:
 
 ```bash
 heimdal install agent-cli
+heimdal install agent-browser chromium
 heimdal install chromium
 ```
 
@@ -87,6 +89,17 @@ heimdal session diagnose --name qa --json
 heimdal session save --name qa --test tests/browser/exploration.spec.ts
 heimdal session stop --name qa
 ```
+
+Sessions are headless by default, which suits unattended agents. Add
+`--headed` to `session start` when you want a visible, inspectable browser:
+
+```bash
+heimdal session start --dir /path/to/worktree --name qa-visible --headed
+```
+
+Headed and headless sessions have the same persistence and evidence behavior.
+Snapshots are semantic and omit coordinates by default. Add `--boxes` only
+when layout or coordinate-based interaction requires bounding boxes.
 
 The directory supplied to `session start` is recorded, so later commands can
 find a uniquely named session even when run from another directory. Pass
@@ -167,6 +180,30 @@ running fixture. From another shell, select a run with `--run ID` or
 
 Run `heimdal help` for the complete command summary and
 `heimdal session --help` for interactive-session options.
+
+## Agent benchmark
+
+On 2026-07-20, two fresh coding agents started from the same React commit and
+implemented, tested, built, and browser-verified a persistent theme toggle. One
+used the official `playwright-cli` directly; the other used Heimdal. Both passed
+the task, including a click and reload in the same named browser session.
+
+| Measure | Playwright CLI | Heimdal |
+| --- | ---: | ---: |
+| Persistent-browser invocations | 9 | 7 |
+| Browser output | 5.1 KB | 4.5 KB |
+| All shell commands | 27 | 23 |
+| Wall time | 368.5 s | 264.2 s |
+| Model input tokens | 1,252,500 | 968,258 |
+| Model output tokens | 13,660 | 13,572 |
+
+Heimdal used 22% fewer browser-session invocations by returning Playwright's
+own fresh snapshot after startup and state changes. The full run used 23% fewer
+input tokens and finished 28% sooner, but this is one controlled run rather
+than a general performance claim; agent choices vary and token totals include
+cached context. The result supports Heimdal's narrower rationale: keep
+Playwright as the runtime while giving terminal agents compact, persistent,
+project-scoped browser control.
 
 ## Development
 

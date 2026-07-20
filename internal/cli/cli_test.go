@@ -43,6 +43,44 @@ func TestDirectoryFlagKeepsRootCompatibilityWithoutAmbiguity(t *testing.T) {
 	}
 }
 
+func TestDoctorAcceptsSessionOnlyProject(t *testing.T) {
+	root := t.TempDir()
+	agentRunner := filepath.Join(root, "fake-playwright-cli")
+	if err := os.WriteFile(agentRunner, []byte("#!/bin/sh\nprintf 'playwright-cli 1.0.0\\n'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	config := Config{
+		Version: 1,
+		Playwright: PlaywrightConfig{
+			Runner: []string{filepath.Join(root, "missing-playwright")},
+		},
+		Session:   SessionConfig{Runner: []string{agentRunner}},
+		Artifacts: ArtifactConfig{Directory: defaultArtifactDir},
+	}
+	contents, err := json.Marshal(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, configFileName), contents, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var out, errOut strings.Builder
+	if code := runDoctor([]string{"--dir", root, "--json"}, &out, &errOut); code != 0 {
+		t.Fatalf("doctor exited %d: stdout=%s stderr=%s", code, out.String(), errOut.String())
+	}
+	var report DoctorReport
+	if err := json.Unmarshal([]byte(out.String()), &report); err != nil {
+		t.Fatal(err)
+	}
+	if report.Status != "ok" || report.PlaywrightReady || !report.SessionReady {
+		t.Fatalf("unexpected session-only doctor report: %#v", report)
+	}
+	if !strings.Contains(strings.Join(report.Warnings, "\n"), "deterministic run and list commands") {
+		t.Fatalf("doctor omitted the unavailable test capability: %#v", report.Warnings)
+	}
+}
+
 func TestRunEnvironmentUsesConfiguredIsolationNames(t *testing.T) {
 	project := Project{
 		Root:   "/tmp/project",
@@ -266,6 +304,7 @@ func TestParseSessionOptions(t *testing.T) {
 		"--url", "http://127.0.0.1:${PORT}",
 		"--port", "4567",
 		"--headed",
+		"--boxes",
 		"--persistent",
 		"--timeout-ms", "9000",
 		"--verbose",
@@ -278,7 +317,7 @@ func TestParseSessionOptions(t *testing.T) {
 	if options.Root != "/tmp/project" || options.Name != "demo/auth" || options.Port != 4567 {
 		t.Fatalf("unexpected session options: %#v", options)
 	}
-	if !options.Headed || !options.Persistent || options.Timeout != 9*time.Second {
+	if !options.Headed || !options.Boxes || !options.Persistent || options.Timeout != 9*time.Second {
 		t.Fatalf("unexpected session flags: %#v", options)
 	}
 	if !options.Verbose {
@@ -326,6 +365,9 @@ func TestNormalizeGeneratedLocator(t *testing.T) {
 	if got := normalizeGeneratedLocator("Locator: page.getByRole('button', { name: 'Save' })\n"); got != "page.getByRole('button', { name: 'Save' })" {
 		t.Fatalf("locator = %q", got)
 	}
+	if got := normalizeGeneratedLocator("[Snapshot](.dev/heimdal/page.yml)\n"); got != "" {
+		t.Fatalf("snapshot path was accepted as locator: %q", got)
+	}
 }
 
 func TestSessionActionsReobserveStateChanges(t *testing.T) {
@@ -342,13 +384,13 @@ func TestSessionActionsReobserveStateChanges(t *testing.T) {
 }
 
 func TestSessionSnapshotArgsBoundDefaultOutput(t *testing.T) {
-	if got, want := strings.Join(sessionSnapshotArgs(false, false, nil), " "), "snapshot --boxes --depth=5"; got != want {
+	if got, want := strings.Join(sessionSnapshotArgs(false, false, nil), " "), "snapshot --depth=5"; got != want {
 		t.Fatalf("default snapshot args = %q, want %q", got, want)
 	}
-	if got, want := strings.Join(sessionSnapshotArgs(true, false, nil), " "), "snapshot --depth=5"; got != want {
-		t.Fatalf("no-boxes snapshot args = %q, want %q", got, want)
+	if got, want := strings.Join(sessionSnapshotArgs(true, false, nil), " "), "snapshot --boxes --depth=5"; got != want {
+		t.Fatalf("boxed snapshot args = %q, want %q", got, want)
 	}
-	if got, want := strings.Join(sessionSnapshotArgs(false, true, nil), " "), "snapshot --boxes"; got != want {
+	if got, want := strings.Join(sessionSnapshotArgs(false, true, nil), " "), "snapshot"; got != want {
 		t.Fatalf("verbose snapshot args = %q, want %q", got, want)
 	}
 	if got, want := strings.Join(sessionSnapshotArgs(false, false, []string{"--depth=9", "--boxes"}), " "), "snapshot --depth=9 --boxes"; got != want {
@@ -360,6 +402,10 @@ func TestCompactSessionCommandRetainsUsefulResultsWithoutSecrets(t *testing.T) {
 	compactArgs := compactSessionArgs([]string{"fill", "e5", "private token"})
 	if strings.Join(compactArgs, " ") != "fill e5 <text:13 chars>" {
 		t.Fatalf("compact command args = %#v", compactArgs)
+	}
+	evaluation := compactSessionArgs([]string{"eval", "() => localStorage.getItem('token')"})
+	if strings.Join(evaluation, " ") != "eval <function:35 chars>" {
+		t.Fatalf("compact eval args = %#v", evaluation)
 	}
 	fill := compactSessionCommand(sessionCommandResult{Args: []string{"fill", "e5", "private token"}}, "page.getByLabel('Token')")
 	if strings.Contains(fill, "private token") || !strings.Contains(fill, "<text:13 chars>") {
@@ -373,6 +419,29 @@ func TestCompactSessionCommandRetainsUsefulResultsWithoutSecrets(t *testing.T) {
 		if !strings.Contains(find, expected) {
 			t.Fatalf("find output omitted %q: %q", expected, find)
 		}
+	}
+}
+
+func TestEmittedSessionSnapshotReusesBoundedPlaywrightArtifact(t *testing.T) {
+	root := t.TempDir()
+	sessionDir := filepath.Join(root, ".dev", "heimdal", "sessions", "qa", "run-1")
+	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	snapshotPath := filepath.Join(sessionDir, "page.yml")
+	snapshot := "- main [ref=e1]:\n  - region [ref=e2]:\n    - button \"Save\" [ref=e3]\n"
+	if err := os.WriteFile(snapshotPath, []byte(snapshot), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	project := Project{Root: root}
+	state := SessionState{SessionDir: sessionDir}
+	output := "- [Snapshot](.dev/heimdal/sessions/qa/run-1/page.yml)\n"
+	got, ok := emittedSessionSnapshot(project, state, output)
+	if !ok || got != strings.TrimSpace(snapshot) {
+		t.Fatalf("emitted snapshot = %q, %v", got, ok)
+	}
+	if _, ok := emittedSessionSnapshot(project, state, "[Snapshot](../../outside.yml)"); ok {
+		t.Fatal("snapshot outside the session directory was accepted")
 	}
 }
 
@@ -457,8 +526,17 @@ func TestSessionTestOmitsExplorationCommands(t *testing.T) {
 func TestStartSessionUsesPersistentAgentCLIState(t *testing.T) {
 	t.Setenv("HEIMDAL_STATE_DIR", t.TempDir())
 	root := t.TempDir()
+	snapshotRelative := filepath.Join(defaultArtifactDir, "sessions", "demo", "run-1", "page.yml")
+	snapshotPath := filepath.Join(root, snapshotRelative)
+	if err := os.MkdirAll(filepath.Dir(snapshotPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(snapshotPath, []byte("- button \"Save\" [ref=e2]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	runner := filepath.Join(root, "fake-playwright-cli")
-	if err := os.WriteFile(runner, []byte("#!/bin/sh\nprintf 'fake playwright cli\\n'\n"), 0o755); err != nil {
+	runnerScript := "#!/bin/sh\ncase \"$*\" in\n  *generate-locator*) printf '%s\\n' 'Locator: page.getByRole(\"button\")' ;;\n  *) printf '%s\\n' '- [Snapshot](" + filepath.ToSlash(snapshotRelative) + ")' ;;\nesac\n"
+	if err := os.WriteFile(runner, []byte(runnerScript), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	project := Project{
@@ -481,7 +559,7 @@ func TestStartSessionUsesPersistentAgentCLIState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if state.ActionCount != 2 || state.Name != "demo" || state.URL != "http://127.0.0.1:4567" {
+	if state.ActionCount != 1 || state.Name != "demo" || state.URL != "http://127.0.0.1:4567" {
 		t.Fatalf("unexpected session state: %#v", state)
 	}
 	if _, err := os.Stat(state.CLIConfig); err != nil {
@@ -490,14 +568,14 @@ func TestStartSessionUsesPersistentAgentCLIState(t *testing.T) {
 	if _, err := runSessionCommand(context.Background(), project, &state, statePath, []string{"click", "e2"}, "page.getByRole('button', { name: 'Save' })"); err != nil {
 		t.Fatal(err)
 	}
-	if state.ActionCount != 3 {
-		t.Fatalf("action count = %d, want 3", state.ActionCount)
+	if state.ActionCount != 2 {
+		t.Fatalf("action count = %d, want 2", state.ActionCount)
 	}
 	actions, err := readSessionActions(state.ActionLog)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(actions) != 3 || actions[2].Locator == "" {
+	if len(actions) != 2 || actions[1].Locator == "" {
 		t.Fatalf("unexpected actions: %#v", actions)
 	}
 }
