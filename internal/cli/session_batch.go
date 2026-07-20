@@ -192,7 +192,7 @@ func validateSessionBatchStep(step sessionBatchStep) error {
 		return errors.New("command must contain lowercase letters, numbers, or dashes")
 	}
 	switch step.Command {
-	case "start", "stop", "status", "save", "diagnose", "batch", "timeline", "report", "checkpoint", "help":
+	case "start", "stop", "status", "save", "diagnose", "batch", "timeline", "report", "checkpoint", "measure", "help":
 		return fmt.Errorf("command %q is not valid inside a running-session batch", step.Command)
 	}
 	return nil

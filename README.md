@@ -178,6 +178,19 @@ failures, and checkpoints, and maps recorded actions to generated-test line
 numbers. Checkpoints are durable labels, not promises that an arbitrary
 Playwright test fixture can resume from that browser state.
 
+For layout decisions, request one bounded measurement packet instead of
+iterating through screenshots and ad hoc evaluation scripts:
+
+```bash
+heimdal session measure --json
+heimdal session measure e12 --json
+```
+
+The page packet reports viewport and document geometry, content and control
+counts, horizontal overflow, clipped-content samples, and controls below 44 px.
+Targeted measurement adds the element rectangle and key computed styles. It is
+read-only and runs through Playwright's evaluation command.
+
 Sessions are headless by default, which suits unattended agents. Add
 `--headed` to `session start` when you want a visible, inspectable browser:
 

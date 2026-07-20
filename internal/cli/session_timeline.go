@@ -226,7 +226,7 @@ func sessionActionCategory(args []string) string {
 		return "interaction"
 	case "wait":
 		return "wait"
-	case "snapshot", "screenshot":
+	case "snapshot", "screenshot", "measure":
 		return "evidence"
 	case "console", "requests", "diagnose":
 		return "console"

@@ -98,27 +98,28 @@ type sessionCommandResult struct {
 }
 
 type SessionResponse struct {
-	SchemaVersion   int               `json:"schema_version"`
-	Status          string            `json:"status"`
-	Session         string            `json:"session"`
-	RunID           string            `json:"run_id,omitempty"`
-	Root            string            `json:"root,omitempty"`
-	URL             string            `json:"url,omitempty"`
-	Port            int               `json:"port,omitempty"`
-	Action          int               `json:"action,omitempty"`
-	Command         []string          `json:"command,omitempty"`
-	Output          string            `json:"output,omitempty"`
-	Snapshot        string            `json:"snapshot,omitempty"`
-	SnapshotMode    string            `json:"snapshot_mode,omitempty"`
-	SnapshotOmitted int               `json:"snapshot_omitted,omitempty"`
-	Stderr          string            `json:"stderr,omitempty"`
-	Error           string            `json:"error,omitempty"`
-	Correction      string            `json:"correction,omitempty"`
-	Issues          []string          `json:"issues,omitempty"`
-	Server          string            `json:"server,omitempty"`
-	Artifacts       map[string]string `json:"artifacts,omitempty"`
-	State           *SessionState     `json:"state,omitempty"`
-	CompactJSON     bool              `json:"-"`
+	SchemaVersion   int                `json:"schema_version"`
+	Status          string             `json:"status"`
+	Session         string             `json:"session"`
+	RunID           string             `json:"run_id,omitempty"`
+	Root            string             `json:"root,omitempty"`
+	URL             string             `json:"url,omitempty"`
+	Port            int                `json:"port,omitempty"`
+	Action          int                `json:"action,omitempty"`
+	Command         []string           `json:"command,omitempty"`
+	Output          string             `json:"output,omitempty"`
+	Snapshot        string             `json:"snapshot,omitempty"`
+	SnapshotMode    string             `json:"snapshot_mode,omitempty"`
+	SnapshotOmitted int                `json:"snapshot_omitted,omitempty"`
+	Stderr          string             `json:"stderr,omitempty"`
+	Error           string             `json:"error,omitempty"`
+	Correction      string             `json:"correction,omitempty"`
+	Measurement     *LayoutMeasurement `json:"measurement,omitempty"`
+	Issues          []string           `json:"issues,omitempty"`
+	Server          string             `json:"server,omitempty"`
+	Artifacts       map[string]string  `json:"artifacts,omitempty"`
+	State           *SessionState      `json:"state,omitempty"`
+	CompactJSON     bool               `json:"-"`
 }
 
 type sessionSaveOptions struct {
@@ -180,6 +181,8 @@ func runSession(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return runSessionReport(args[1:], out, errOut)
 	case "checkpoint":
 		return runSessionCheckpoint(args[1:], out, errOut)
+	case "measure":
+		return runSessionMeasure(ctx, args[1:], out, errOut)
 	case "batch":
 		return runSessionBatch(ctx, args[1:], out, errOut)
 	case "save":
@@ -202,6 +205,7 @@ Usage:
   heimdal session timeline [NAME] [options]
   heimdal session report [NAME] [options]
   heimdal session checkpoint LABEL [options]
+  heimdal session measure [TARGET] [options]
   heimdal session batch --file FILE|- [options]
   heimdal session save [options]
   heimdal session <PLAYWRIGHT_CLI_COMMAND> [options]
@@ -241,6 +245,11 @@ Stable action forms:
   click TARGET [left|right|middle|--force]
   mouse click X Y
 
+Measure options:
+  TARGET           Optional current element ref or unique selector
+  --session NAME   Named browser session
+  --json           Print bounded structured layout evidence
+
 Examples:
   heimdal session start --name qa --headed
   heimdal session observe
@@ -249,6 +258,7 @@ Examples:
   heimdal session wait --role button --name "Continue" --state enabled --timeout 30s
   heimdal session checkpoint "entered checkout"
   heimdal session timeline --json
+  heimdal session measure --json
   heimdal session batch --file ./browser-steps.json
   heimdal session diagnose --json
   heimdal session save --test tests/browser/exploration.spec.ts
@@ -1587,6 +1597,7 @@ func compactSessionResponse(response SessionResponse) SessionResponse {
 		Stderr:          response.Stderr,
 		Error:           response.Error,
 		Correction:      response.Correction,
+		Measurement:     response.Measurement,
 		Issues:          response.Issues,
 	}
 }
@@ -1645,7 +1656,7 @@ func sessionActionTestLines(action SessionActionRecord) []string {
 		return quoteTypeScript(action.Args[index])
 	}
 	switch command {
-	case "open", "snapshot", "screenshot", "console", "requests", "highlight", "find", "tab-list", "request", "request-headers", "request-body", "response-headers", "response-body", "cookie-list", "cookie-get", "localstorage-list", "localstorage-get", "sessionstorage-list", "sessionstorage-get", "checkpoint":
+	case "open", "snapshot", "screenshot", "measure", "console", "requests", "highlight", "find", "tab-list", "request", "request-headers", "request-body", "response-headers", "response-body", "cookie-list", "cookie-get", "localstorage-list", "localstorage-get", "sessionstorage-list", "sessionstorage-get", "checkpoint":
 		return nil
 	case "goto":
 		return []string{"await page.goto(" + quoted(1) + ");"}

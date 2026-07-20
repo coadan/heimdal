@@ -77,6 +77,13 @@ heimdal session observe -- --depth=4
 heimdal session screenshot -- --full-page
 ```
 
+For design decisions, use `session measure --json` before writing ad hoc eval
+scripts or repeatedly comparing screenshots. It reports bounded viewport and
+document geometry, content/control counts, overflow, clipping, and small touch
+targets. Use `session measure TARGET --json` for the target rectangle and key
+computed styles; then request a screenshot only for visual qualities the
+measurement cannot represent.
+
 For asynchronous UI, issue one semantic wait instead of repeatedly observing
 or sleeping. A role is the page's accessibility role (`button`, `link`,
 `textbox`, or similar). Wait by role and accessible name, visible text, or any
