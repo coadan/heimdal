@@ -107,11 +107,13 @@ fixtures from a step.
 	"measure": `Return bounded decision-ready layout evidence
 
 Usage:
-  heimdal session measure [TARGET] [--session NAME] [--json]
+  heimdal session measure [TARGET] [--viewport WIDTHxHEIGHT] [--session NAME] [--json]
 
 Without TARGET, the packet includes viewport/document geometry, overflow,
 controls, early content, and semantic or grid/flex regions. With TARGET, it
-also includes that element's rectangle and key computed styles.
+also includes that element's rectangle and key computed styles. --viewport
+resizes and measures the whole page in one Playwright invocation and cannot be
+combined with TARGET.
 `,
 	"batch": `Execute a bounded JSON sequence in one agent round trip
 

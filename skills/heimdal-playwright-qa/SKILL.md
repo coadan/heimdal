@@ -94,14 +94,16 @@ heimdal session observe -- --depth=4
 heimdal session screenshot -- --full-page
 ```
 
-For design decisions, use `session measure --json` before writing ad hoc eval
-scripts or repeatedly comparing screenshots. The bounded packet reports
+For design decisions, use `session measure --viewport 360x800 --json` before
+writing ad hoc eval scripts or separately resizing and measuring. Omit
+`--viewport` to measure the current viewport. The bounded packet reports
 viewport/document geometry, overflow, clipping, touch-target warnings, controls
 and early leaf content, plus semantic, grid/flex, and padded/scroll regions with
 tracks or direction, padding, gap, and overflow. One packet per viewport should
 usually support the layout decision. Use `session measure TARGET --json` only when a remaining
-decision needs that target's rectangle and key computed styles; then request a
-screenshot only for visual qualities the measurement cannot represent.
+decision needs that target's rectangle and key computed styles; TARGET and
+`--viewport` are intentionally separate. Then request a screenshot only for
+visual qualities the measurement cannot represent.
 
 For canvas or spatial controls, measure once and use element-relative pointer
 coordinates instead of viewport arithmetic or raw mouse sequences:

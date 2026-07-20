@@ -233,7 +233,7 @@ Usage:
   heimdal session timeline [NAME] [options]
   heimdal session report [NAME] [options]
   heimdal session checkpoint LABEL [options]
-  heimdal session measure [TARGET] [options]
+  heimdal session measure [TARGET] [--viewport WIDTHxHEIGHT] [options]
   heimdal session batch --file FILE|- [options]
   heimdal session save [options]
   heimdal session <PLAYWRIGHT_CLI_COMMAND> [options]
@@ -298,6 +298,7 @@ Save options:
 
 Measure options:
   TARGET           Optional current element ref or unique selector
+  --viewport SIZE  Resize and measure the page in one Playwright call (WIDTHxHEIGHT)
   --session NAME   Named browser session
   --json           Print bounded structured layout evidence
 
@@ -326,7 +327,7 @@ Examples:
   heimdal session expect --role button --name "Continue" --state visible
   heimdal session checkpoint "entered checkout"
   heimdal session timeline --json
-  heimdal session measure --json
+  heimdal session measure --viewport 360x800 --json
   heimdal session batch --file ./browser-steps.json
   heimdal session diagnose --json
   heimdal session save --test tests/browser/exploration.spec.ts

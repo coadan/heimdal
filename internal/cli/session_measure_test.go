@@ -33,3 +33,31 @@ func TestLayoutMeasurementScriptIsBoundedAndReadOnly(t *testing.T) {
 		}
 	}
 }
+
+func TestParseSessionMeasureViewport(t *testing.T) {
+	options, err := parseSessionMeasureOptions([]string{"--viewport", "360x800", "--session", "qa", "--json"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if options.Viewport == nil || options.Viewport.Width != 360 || options.Viewport.Height != 800 || options.Name != "qa" || !options.JSON {
+		t.Fatalf("measure options = %#v", options)
+	}
+	equals, err := parseSessionMeasureOptions([]string{"--viewport=1280x900"})
+	if err != nil || equals.Viewport == nil || equals.Viewport.Width != 1280 || equals.Viewport.Height != 900 {
+		t.Fatalf("equals viewport = %#v, %v", equals, err)
+	}
+	for _, args := range [][]string{{"--viewport", "360"}, {"--viewport", "0x800"}, {"--viewport", "360x800", "--viewport", "1280x900"}} {
+		if _, err := parseSessionMeasureOptions(args); err == nil {
+			t.Fatalf("expected invalid viewport for %v", args)
+		}
+	}
+}
+
+func TestLayoutMeasurementViewportScriptFusesResizeAndMeasure(t *testing.T) {
+	script := layoutMeasurementViewportScript(360, 800)
+	for _, required := range []string{"async page =>", "page.setViewportSize({ width: 360, height: 800 })", "return await page.evaluate(", "horizontal_overflow"} {
+		if !strings.Contains(script, required) {
+			t.Fatalf("viewport measurement script omitted %q", required)
+		}
+	}
+}

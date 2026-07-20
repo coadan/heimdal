@@ -6,8 +6,19 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 )
+
+type sessionMeasureViewport struct {
+	Width  int
+	Height int
+}
+
+type sessionMeasureOptions struct {
+	SessionOptions
+	Viewport *sessionMeasureViewport
+}
 
 type LayoutViewport struct {
 	Width      float64 `json:"width"`
@@ -87,12 +98,16 @@ type LayoutMeasurement struct {
 }
 
 func runSessionMeasure(ctx context.Context, args []string, out, errOut io.Writer) int {
-	options, err := parseSessionOptions(args)
+	measureOptions, err := parseSessionMeasureOptions(args)
+	options := measureOptions.SessionOptions
 	if err != nil {
 		return reportError(options.JSON, err, out, errOut)
 	}
 	if len(options.Forwarded) > 1 {
 		return reportError(options.JSON, errors.New("session measure accepts at most one target"), out, errOut)
+	}
+	if measureOptions.Viewport != nil && len(options.Forwarded) > 0 {
+		return reportError(options.JSON, errors.New("session measure --viewport cannot be combined with TARGET; measure the page first, then target only if needed"), out, errOut)
 	}
 	project, state, statePath, err := discoverSession(options)
 	if err != nil {
@@ -100,6 +115,11 @@ func runSessionMeasure(ctx context.Context, args []string, out, errOut io.Writer
 	}
 	logicalArgs := []string{"measure"}
 	runtimeArgs := []string{"eval", layoutMeasurementScript}
+	if viewport := measureOptions.Viewport; viewport != nil {
+		value := fmt.Sprintf("%dx%d", viewport.Width, viewport.Height)
+		logicalArgs = append(logicalArgs, "--viewport", value)
+		runtimeArgs = []string{"run-code", layoutMeasurementViewportScript(viewport.Width, viewport.Height)}
+	}
 	if len(options.Forwarded) == 1 {
 		logicalArgs = append(logicalArgs, options.Forwarded[0])
 		runtimeArgs = append(runtimeArgs, options.Forwarded[0])
@@ -126,6 +146,57 @@ func runSessionMeasure(ctx context.Context, args []string, out, errOut io.Writer
 		}
 	}
 	return printSessionResponse(out, errOut, response, options.JSON)
+}
+
+func parseSessionMeasureOptions(args []string) (sessionMeasureOptions, error) {
+	options := sessionMeasureOptions{}
+	common := make([]string, 0, len(args))
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		if arg == "--" {
+			common = append(common, args[index:]...)
+			break
+		}
+		value := ""
+		switch {
+		case arg == "--viewport":
+			parsed, next, err := nextValue(args, index, arg)
+			if err != nil {
+				return options, err
+			}
+			value, index = parsed, next
+		case strings.HasPrefix(arg, "--viewport="):
+			value = strings.TrimPrefix(arg, "--viewport=")
+		default:
+			common = append(common, arg)
+			continue
+		}
+		if options.Viewport != nil {
+			return options, errors.New("--viewport may be specified only once")
+		}
+		viewport, err := parseSessionMeasureViewport(value)
+		if err != nil {
+			return options, err
+		}
+		options.Viewport = &viewport
+	}
+	parsed, err := parseSessionOptions(common)
+	options.SessionOptions = parsed
+	return options, err
+}
+
+func parseSessionMeasureViewport(value string) (sessionMeasureViewport, error) {
+	widthText, heightText, found := strings.Cut(strings.ToLower(strings.TrimSpace(value)), "x")
+	width, widthErr := strconv.Atoi(widthText)
+	height, heightErr := strconv.Atoi(heightText)
+	if !found || widthErr != nil || heightErr != nil || width < 1 || height < 1 || width > 10000 || height > 10000 {
+		return sessionMeasureViewport{}, fmt.Errorf("--viewport must be WIDTHxHEIGHT with dimensions from 1 to 10000 (got %q)", value)
+	}
+	return sessionMeasureViewport{Width: width, Height: height}, nil
+}
+
+func layoutMeasurementViewportScript(width, height int) string {
+	return fmt.Sprintf("async page => { await page.setViewportSize({ width: %d, height: %d }); return await page.evaluate(%s); }", width, height, layoutMeasurementScript)
 }
 
 func parseLayoutMeasurement(output string) (LayoutMeasurement, error) {

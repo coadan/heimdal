@@ -240,14 +240,16 @@ iterating through screenshots and ad hoc evaluation scripts:
 
 ```bash
 heimdal session measure --json
+heimdal session measure --viewport 360x800 --json
 heimdal session measure e12 --json
 ```
 
 The page packet reports viewport and document geometry, overflow and clipping,
 touch-target warnings, bounded controls and early leaf content, plus semantic,
 grid/flex, and padded/scroll regions with tracks or direction, padding, gap,
-and overflow. One packet per viewport is usually enough for a layout decision.
-Targeted measurement adds one element's rectangle and key computed styles. It is
+and overflow. `--viewport WIDTHxHEIGHT` resizes and measures in one Playwright
+call; one packet per viewport is usually enough for a layout decision. Targeted
+measurement adds one element's rectangle and key computed styles. It is
 read-only and runs through Playwright's evaluation command.
 
 For canvas or spatial controls, keep coordinates relative to a measured
