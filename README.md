@@ -456,26 +456,34 @@ with dependencies preinstalled and the same model and reasoning settings. One
 lane used the official `playwright-cli` directly and the other used Heimdal.
 Tests, builds, diffs, and final browser behavior were checked independently.
 
-| Task and tool | Browser rounds | Runtime calls | Wall time | Input tokens | Output tokens | Result |
+| Task and tool | Browser rounds | Browser commands | Wall time | Input tokens | Output tokens | Result |
 | --- | ---: | ---: | ---: | ---: | ---: | --- |
-| Theme feature, Playwright CLI | 11 | 11 | 289.2 s | 889,943 | 11,904 | Pass |
-| Theme feature, Heimdal | 5 | 10 | 301.9 s | 725,752 | 9,977 | Pass |
-| Responsive design, Playwright CLI | 7 | 27 | 287.4 s | 669,982 | 9,997 | Pass |
-| Responsive design, Heimdal | 7 | 10 | 181.0 s | 438,172 | 5,775 | Pass |
+| Theme feature, Playwright CLI | 9 | 11 | 315.5 s | 702,459 | 11,630 | Pass |
+| Theme feature, Heimdal | 5 | 12 | 375.4 s | 760,176 | 11,070 | Pass |
+| Responsive design, Playwright CLI | 7 | 27 | 270.6 s | 688,329 | 10,230 | Pass |
+| Responsive design, Heimdal | 3 | 8 | 203.6 s | 529,646 | 6,803 | Pass |
 
-A browser round is one agent shell turn containing browser work; batched calls
-within it are counted separately. On the coding task, Heimdal used 55% fewer
-browser rounds and 18% fewer input tokens, but finished 4% slower. On the design
-task, both agents needed one CSS iteration and seven browser rounds, so this pair
-does not prove fewer design iterations. Heimdal did use 63% fewer runtime calls,
-35% fewer input tokens, and 42% fewer output tokens, finishing 37% sooner. The
-direct lane included one unsupported command that printed upstream help.
+A browser round is one agent shell turn containing browser work. Browser
+commands are CLI commands issued by the agent; composite Heimdal commands can
+perform several upstream Playwright operations internally. On the coding task,
+Heimdal used 44% fewer browser rounds and 5% fewer output tokens, but issued one
+more browser command, used 8% more input tokens, and finished 19% slower. On the
+design task, Heimdal reached the verified result in one CSS iteration instead of
+two, with 57% fewer browser rounds, 70% fewer browser commands, 23% fewer input
+tokens, 34% fewer output tokens, and 25% lower wall time. The direct design lane
+also issued one unsupported command that printed upstream help.
 
 These are single agent pairs, not a general speed claim. Token totals include
-cached context, agent choices vary, and the direct design lane was rerun after
-the original benchmark wrapper missed its final usage record. The important
-result is narrower: Heimdal's combined semantic and layout packets can reduce
-tool chatter without changing Playwright as the runtime.
+cached context and agent choices vary. The important result is narrower:
+Heimdal's combined semantic and layout packets can reduce tool chatter and
+design iterations when the decision depends on browser evidence, without
+changing Playwright as the runtime. The coding result shows that this does not
+guarantee lower whole-task cost.
+
+The viewport fusion itself is deterministic: across six local repetitions,
+separate resize and measure commands averaged 1.11 seconds while
+`measure --viewport` averaged 0.71 seconds, a 36% reduction for the same layout
+evidence.
 
 A deterministic local microbenchmark on the same date measured cached session
 discovery at about 32 µs versus 12 ms for full project rediscovery. These
