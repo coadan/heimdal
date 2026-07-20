@@ -18,7 +18,18 @@ type Config struct {
 	Version    int              `json:"version"`
 	Playwright PlaywrightConfig `json:"playwright"`
 	Session    SessionConfig    `json:"session,omitempty"`
+	Doctor     DoctorConfig     `json:"doctor,omitempty"`
 	Artifacts  ArtifactConfig   `json:"artifacts"`
+}
+
+type DoctorConfig struct {
+	Checks []DoctorCheckConfig `json:"checks,omitempty"`
+}
+
+type DoctorCheckConfig struct {
+	Name      string   `json:"name"`
+	Command   []string `json:"command"`
+	TimeoutMS int      `json:"timeout_ms,omitempty"`
 }
 
 type PlaywrightConfig struct {
@@ -116,6 +127,14 @@ func loadConfig(root string, detectedConfig string) (Config, string, error) {
 	}
 	if cfg.Artifacts.Retention.MaxAgeDays < 0 || cfg.Artifacts.Retention.KeepFailures < 0 || cfg.Artifacts.Retention.MaxBytes < 0 {
 		return Config{}, path, errors.New("artifact retention values cannot be negative")
+	}
+	for index, check := range cfg.Doctor.Checks {
+		if strings.TrimSpace(check.Name) == "" || len(check.Command) == 0 || strings.TrimSpace(check.Command[0]) == "" {
+			return Config{}, path, fmt.Errorf("doctor check %d requires a name and command", index+1)
+		}
+		if check.TimeoutMS < 0 {
+			return Config{}, path, fmt.Errorf("doctor check %q timeout_ms cannot be negative", check.Name)
+		}
 	}
 	if cfg.Playwright.Config == "" {
 		cfg.Playwright.Config = detectedConfig

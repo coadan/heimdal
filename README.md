@@ -60,6 +60,10 @@ heimdal doctor --dir /path/to/worktree --json
 the containing Git project and its `.heimdal.json`. The old `--root` spelling is
 accepted for compatibility but omitted from current examples.
 
+Projects can declare required, non-mutating preflight commands under
+`doctor.checks`. A failed or timed-out check makes doctor return `issues`
+instead of claiming the project is ready.
+
 ## Run a deterministic test
 
 Pass Playwright arguments after `--`:
@@ -240,6 +244,11 @@ interactive QA can use this shape:
     "port_env": "PORT",
     "server_timeout_ms": 45000
   },
+  "doctor": {
+    "checks": [
+      {"name": "typecheck-runtime", "command": ["npm", "run", "typecheck", "--", "--version"], "timeout_ms": 10000}
+    ]
+  },
   "artifacts": {
     "directory": ".heimdal",
     "retention": {
@@ -257,6 +266,20 @@ other configured environment templates are expanded for the app command.
 `provenance_env` records only each listed variable's name and set/unset state
 in run evidence; values are never persisted. Set `artifacts.retention.enabled`
 to `false` to disable automatic cleanup; manual `heimdal gc` remains available.
+Doctor checks execute argument arrays directly from the project root; they are
+never shell strings.
+
+Tests can publish bounded named JSON evidence without log parsing by emitting
+one line per value:
+
+```text
+HEIMDAL_EVIDENCE design.metrics {"iterations":2,"latency_ms":42}
+```
+
+`run` and `report` expose these values under `evidence`. Heimdal also recognizes
+named `application/json` Playwright attachments when the reporter lists their
+artifact path. Names use letters, numbers, dots, dashes, or underscores;
+payloads are limited to 64 KiB.
 
 ## Coordinate with a running test
 

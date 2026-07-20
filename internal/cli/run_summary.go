@@ -3,6 +3,8 @@ package cli
 import (
 	"bufio"
 	"crypto/sha256"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -219,6 +221,97 @@ func enrichRunResult(result *RunResult) {
 
 var runLocationPattern = regexp.MustCompile(`^(.+\.[cm]?[jt]sx?):([0-9]+):([0-9]+)$`)
 var runWarningPIDPattern = regexp.MustCompile(`^\(node:[0-9]+\)\s*`)
+var runAttachmentPattern = regexp.MustCompile(`attachment #[0-9]+:\s*(.+?)\s*\(application/json(?:;[^)]*)?\)`)
+
+func collectRunEvidence(stdoutPath, stderrPath, runDir, projectRoot string) (map[string]json.RawMessage, []string) {
+	evidence := make(map[string]json.RawMessage)
+	var issues []string
+	for _, path := range []string{stdoutPath, stderrPath} {
+		file, err := os.Open(path)
+		if err != nil {
+			continue
+		}
+		scanner := bufio.NewScanner(file)
+		scanner.Buffer(make([]byte, 16*1024), 128*1024)
+		pendingAttachment := ""
+		for scanner.Scan() {
+			line := strings.TrimSpace(stripANSI(scanner.Text()))
+			if strings.HasPrefix(line, "HEIMDAL_EVIDENCE ") {
+				name, payload, found := strings.Cut(strings.TrimSpace(strings.TrimPrefix(line, "HEIMDAL_EVIDENCE ")), " ")
+				if !found || validateCoordinationSelector("evidence", name) != nil || len(payload) > coordinationMaxMetadataBytes || !json.Valid([]byte(payload)) {
+					issues = appendBoundedEvidenceIssue(issues, "invalid HEIMDAL_EVIDENCE line")
+					continue
+				}
+				if _, exists := evidence[name]; !exists {
+					evidence[name] = json.RawMessage(append([]byte(nil), payload...))
+				}
+				continue
+			}
+			if match := runAttachmentPattern.FindStringSubmatch(line); len(match) == 2 {
+				pendingAttachment = strings.TrimSpace(match[1])
+				continue
+			}
+			if pendingAttachment == "" || line == "" || strings.HasPrefix(line, "─") {
+				continue
+			}
+			attachmentPath := strings.TrimSpace(strings.Trim(line, "─"))
+			if !filepath.IsAbs(attachmentPath) {
+				attachmentPath = filepath.Join(projectRoot, attachmentPath)
+			}
+			payload, err := readEvidenceAttachment(runDir, attachmentPath)
+			if err != nil {
+				issues = appendBoundedEvidenceIssue(issues, fmt.Sprintf("attachment %s: %v", pendingAttachment, err))
+				pendingAttachment = ""
+				continue
+			}
+			if validateCoordinationSelector("evidence", pendingAttachment) == nil {
+				if _, exists := evidence[pendingAttachment]; !exists {
+					evidence[pendingAttachment] = payload
+				}
+			} else {
+				issues = appendBoundedEvidenceIssue(issues, fmt.Sprintf("invalid attachment evidence name %q", pendingAttachment))
+			}
+			pendingAttachment = ""
+		}
+		if err := scanner.Err(); err != nil {
+			issues = appendBoundedEvidenceIssue(issues, fmt.Sprintf("scan %s: %v", filepath.Base(path), err))
+		}
+		_ = file.Close()
+	}
+	if len(evidence) == 0 {
+		evidence = nil
+	}
+	return evidence, issues
+}
+
+func readEvidenceAttachment(runDir, path string) (json.RawMessage, error) {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+	relative, err := filepath.Rel(runDir, absolute)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return nil, errors.New("path is outside the run artifact directory")
+	}
+	contents, err := os.ReadFile(absolute)
+	if err != nil {
+		return nil, err
+	}
+	if len(contents) > coordinationMaxMetadataBytes {
+		return nil, fmt.Errorf("JSON exceeds %d bytes", coordinationMaxMetadataBytes)
+	}
+	if !json.Valid(contents) {
+		return nil, errors.New("attachment is not valid JSON")
+	}
+	return json.RawMessage(append([]byte(nil), contents...)), nil
+}
+
+func appendBoundedEvidenceIssue(issues []string, issue string) []string {
+	if len(issues) >= 20 {
+		return issues
+	}
+	return append(issues, truncateTraceValue(issue, 500))
+}
 
 func analyzeRunOutput(stdout, stderr string) runAnalysis {
 	cleanStdout := stripANSI(stdout)

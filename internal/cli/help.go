@@ -7,8 +7,9 @@ const doctorUsage = `Check Heimdal capabilities for a project
 Usage:
   heimdal doctor [--dir PATH] [--json]
 
-Reports the resolved worktree, Playwright runtimes, configuration, artifact
-root, and actionable readiness warnings without changing the project.
+Reports the resolved worktree, Playwright runtimes, configured project
+preflight checks, artifact root, and actionable readiness warnings without
+changing the project.
 `
 
 const initUsage = `Create a minimal Heimdal project configuration

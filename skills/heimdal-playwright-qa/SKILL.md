@@ -19,6 +19,9 @@ heimdal doctor
 heimdal run -- tests/browser/<flow>.spec.ts --grep "<behavior>"
 ```
 
+Treat doctor status `issues` as a failed preflight. Configured project checks
+represent required runtimes or build prerequisites and run without a shell.
+
 Treat only `passed` as passing evidence. Heimdal reports `skipped` with a
 nonzero exit when Playwright discovers tests but executes none. Run and report
 JSON expose structured test counts, a primary failure fingerprint, deduplicated
@@ -185,6 +188,11 @@ heimdal signal wait fixture.ready --run latest --timeout 2m
 heimdal metadata publish fixture.diagnostics --file ./metadata.json
 heimdal metadata get fixture.diagnostics --run latest --json
 ```
+
+For test-produced measurements or decision evidence, emit bounded named JSON
+as `HEIMDAL_EVIDENCE <name> <json>` or attach `application/json` through
+Playwright. Read the structured `evidence` object from the run/report instead
+of scraping stdout. Never publish secrets as evidence.
 
 ## Invariants
 

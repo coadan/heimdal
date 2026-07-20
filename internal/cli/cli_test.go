@@ -265,6 +265,22 @@ func TestDefaultRunIDIsValidForEmptyAndLongBranchNames(t *testing.T) {
 	}
 }
 
+func TestProjectPreflightSurfacesRequiredTooling(t *testing.T) {
+	project := Project{Root: t.TempDir(), Config: Config{Doctor: DoctorConfig{Checks: []DoctorCheckConfig{
+		{Name: "go-runtime", Command: []string{"go", "version"}},
+		{Name: "missing-tool", Command: []string{"definitely-missing-heimdal-preflight-command"}},
+	}}}}
+	results := runProjectPreflight(project)
+	if len(results) != 2 || results[0].Status != "passed" || results[1].Status != "failed" {
+		t.Fatalf("preflight = %#v", results)
+	}
+	var out strings.Builder
+	report := DoctorReport{Status: "issues", Branch: "main", SessionReady: true, Preflight: results, Warnings: []string{"project preflight failed"}}
+	if code := printDoctor(report, false, &out, io.Discard, 1); code != 1 || !strings.Contains(out.String(), "Heimdal doctor: issues") || !strings.Contains(out.String(), "preflight missing-tool: failed") {
+		t.Fatalf("doctor issues output = %q, code %d", out.String(), code)
+	}
+}
+
 func TestTopLevelCoordinationCommandsAndReportShareOneRun(t *testing.T) {
 	root, _ := coordinationTestRun(t, "run-1")
 	t.Setenv("HEIMDAL_RUN_DIR", "")

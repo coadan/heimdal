@@ -92,6 +92,47 @@ func TestRunEnvironmentProvenanceRecordsNamesAndStateWithoutValues(t *testing.T)
 	}
 }
 
+func TestRunEvidenceCollectsNamedStdoutAndJSONAttachments(t *testing.T) {
+	runDir := t.TempDir()
+	attachmentDir := filepath.Join(runDir, "test-results", "example")
+	if err := os.MkdirAll(attachmentDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	attachment := filepath.Join(attachmentDir, "latency.json")
+	if err := os.WriteFile(attachment, []byte(`{"rounds":3,"latency_ms":42}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout := filepath.Join(runDir, "stdout.log")
+	lines := "HEIMDAL_EVIDENCE design.metrics {\"iterations\":2}\n" +
+		"    attachment #1: latency.timeline (application/json)\n" +
+		"    " + attachment + "\n"
+	if err := os.WriteFile(stdout, []byte(lines), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stderr := filepath.Join(runDir, "stderr.log")
+	if err := os.WriteFile(stderr, []byte("HEIMDAL_EVIDENCE invalid not-json\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	evidence, issues := collectRunEvidence(stdout, stderr, runDir, runDir)
+	if len(evidence) != 2 || string(evidence["design.metrics"]) != `{"iterations":2}` || !strings.Contains(string(evidence["latency.timeline"]), `"latency_ms":42`) {
+		t.Fatalf("evidence = %#v", evidence)
+	}
+	if len(issues) != 1 || !strings.Contains(issues[0], "invalid") {
+		t.Fatalf("evidence issues = %#v", issues)
+	}
+}
+
+func TestRunEvidenceRejectsAttachmentOutsideRun(t *testing.T) {
+	runDir := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "secret.json")
+	if err := os.WriteFile(outside, []byte(`{"secret":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readEvidenceAttachment(runDir, outside); err == nil || !strings.Contains(err.Error(), "outside") {
+		t.Fatalf("outside attachment error = %v", err)
+	}
+}
+
 func TestDirectoryBytesIgnoresDirectories(t *testing.T) {
 	root := t.TempDir()
 	if err := os.Mkdir(filepath.Join(root, "nested"), 0o755); err != nil {

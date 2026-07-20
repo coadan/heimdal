@@ -52,6 +52,8 @@ type RunResult struct {
 	NextCommand    string                     `json:"next_command,omitempty"`
 	Invocation     RunInvocation              `json:"invocation"`
 	Environment    []RunEnvironmentVariable   `json:"environment,omitempty"`
+	Evidence       map[string]json.RawMessage `json:"evidence,omitempty"`
+	EvidenceErrors []string                   `json:"evidence_errors,omitempty"`
 	StdoutTail     string                     `json:"stdout_tail,omitempty"`
 	StderrTail     string                     `json:"stderr_tail,omitempty"`
 	Artifacts      Artifacts                  `json:"artifacts"`
@@ -269,6 +271,7 @@ func executeRun(ctx context.Context, project Project, options RunOptions, out, e
 		result.MetadataError = err.Error()
 	}
 	result.Artifacts.Files = artifactFiles(runDir)
+	result.Evidence, result.EvidenceErrors = collectRunEvidence(stdoutPath, stderrPath, runDir, project.Root)
 	result.FailureContext = failureContextExcerpt(result.Artifacts.Files)
 	if result.Status == "failed" {
 		if _, traceErr := findTrace(runDir); traceErr != nil {

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -209,30 +210,76 @@ func runDoctor(args []string, out, errOut io.Writer) int {
 	if report.PlaywrightConfig == "" {
 		report.Warnings = append(report.Warnings, "no playwright.config.* found; Playwright defaults will be used")
 	}
+	report.Preflight = runProjectPreflight(project)
+	for _, check := range report.Preflight {
+		if check.Status != "passed" {
+			if report.Status == "ok" {
+				report.Status = "issues"
+			}
+			report.Warnings = append(report.Warnings, fmt.Sprintf("project preflight %q %s: %s", check.Name, check.Status, check.Output))
+		}
+	}
 	return printDoctor(report, asJSON, out, errOut, boolToCode(report.Status != "ok"))
 }
 
+type DoctorCheckResult struct {
+	Name       string   `json:"name"`
+	Status     string   `json:"status"`
+	Command    []string `json:"command"`
+	DurationMS int64    `json:"duration_ms"`
+	Output     string   `json:"output,omitempty"`
+}
+
+func runProjectPreflight(project Project) []DoctorCheckResult {
+	results := make([]DoctorCheckResult, 0, len(project.Config.Doctor.Checks))
+	for _, check := range project.Config.Doctor.Checks {
+		timeout := 10 * time.Second
+		if check.TimeoutMS > 0 {
+			timeout = time.Duration(check.TimeoutMS) * time.Millisecond
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		started := time.Now()
+		cmd := exec.CommandContext(ctx, check.Command[0], check.Command[1:]...)
+		cmd.Dir = project.Root
+		cmd.Env = baseEnvironment()
+		output, err := cmd.CombinedOutput()
+		cancel()
+		result := DoctorCheckResult{Name: check.Name, Status: "passed", Command: append([]string(nil), check.Command...), DurationMS: time.Since(started).Milliseconds(), Output: truncateTraceValue(stripANSI(string(output)), 1000)}
+		if ctx.Err() == context.DeadlineExceeded {
+			result.Status = "timed_out"
+		} else if err != nil {
+			result.Status = "failed"
+		}
+		if result.Status != "passed" && result.Output == "" && err != nil {
+			result.Output = truncateTraceValue(err.Error(), 1000)
+		}
+		results = append(results, result)
+	}
+	return results
+}
+
 type DoctorReport struct {
-	SchemaVersion       int      `json:"schema_version"`
-	Status              string   `json:"status"`
-	Root                string   `json:"root"`
-	Branch              string   `json:"branch,omitempty"`
-	ConfigFile          string   `json:"config_file,omitempty"`
-	PlaywrightConfig    string   `json:"playwright_config,omitempty"`
-	PackageManager      string   `json:"package_manager,omitempty"`
-	Runner              []string `json:"runner,omitempty"`
-	AgentRunner         []string `json:"agent_runner,omitempty"`
-	PlaywrightReady     bool     `json:"playwright_ready"`
-	SessionReady        bool     `json:"session_ready"`
-	PlaywrightVersion   string   `json:"playwright_version,omitempty"`
-	AgentVersion        string   `json:"agent_cli_version,omitempty"`
-	ArtifactRoot        string   `json:"artifact_root,omitempty"`
-	ArtifactBytes       int64    `json:"artifact_bytes,omitempty"`
-	ArtifactBudgetBytes int64    `json:"artifact_budget_bytes,omitempty"`
-	ReclaimableBytes    int64    `json:"reclaimable_bytes,omitempty"`
-	InterruptedRuns     int      `json:"interrupted_runs,omitempty"`
-	Warnings            []string `json:"warnings,omitempty"`
-	Error               string   `json:"error,omitempty"`
+	SchemaVersion       int                 `json:"schema_version"`
+	Status              string              `json:"status"`
+	Root                string              `json:"root"`
+	Branch              string              `json:"branch,omitempty"`
+	ConfigFile          string              `json:"config_file,omitempty"`
+	PlaywrightConfig    string              `json:"playwright_config,omitempty"`
+	PackageManager      string              `json:"package_manager,omitempty"`
+	Runner              []string            `json:"runner,omitempty"`
+	AgentRunner         []string            `json:"agent_runner,omitempty"`
+	PlaywrightReady     bool                `json:"playwright_ready"`
+	SessionReady        bool                `json:"session_ready"`
+	PlaywrightVersion   string              `json:"playwright_version,omitempty"`
+	AgentVersion        string              `json:"agent_cli_version,omitempty"`
+	ArtifactRoot        string              `json:"artifact_root,omitempty"`
+	ArtifactBytes       int64               `json:"artifact_bytes,omitempty"`
+	ArtifactBudgetBytes int64               `json:"artifact_budget_bytes,omitempty"`
+	ReclaimableBytes    int64               `json:"reclaimable_bytes,omitempty"`
+	InterruptedRuns     int                 `json:"interrupted_runs,omitempty"`
+	Warnings            []string            `json:"warnings,omitempty"`
+	Preflight           []DoctorCheckResult `json:"preflight,omitempty"`
+	Error               string              `json:"error,omitempty"`
 }
 
 func printDoctor(report DoctorReport, asJSON bool, out, errOut io.Writer, exitCode int) int {
@@ -240,7 +287,7 @@ func printDoctor(report DoctorReport, asJSON bool, out, errOut io.Writer, exitCo
 		_ = writeJSONTo(out, report)
 		return exitCode
 	}
-	if exitCode != 0 {
+	if report.Status == "error" {
 		fmt.Fprintln(errOut, "Heimdal doctor: error")
 		if report.Error != "" {
 			fmt.Fprintln(errOut, report.Error)
@@ -254,7 +301,11 @@ func printDoctor(report DoctorReport, asJSON bool, out, errOut io.Writer, exitCo
 	if report.SessionReady {
 		capabilities = append(capabilities, "sessions")
 	}
-	fmt.Fprintf(out, "Heimdal doctor: ready (%s; %s)\n", report.Branch, strings.Join(capabilities, ", "))
+	label := "ready"
+	if report.Status == "issues" {
+		label = "issues"
+	}
+	fmt.Fprintf(out, "Heimdal doctor: %s (%s; %s)\n", label, report.Branch, strings.Join(capabilities, ", "))
 	fmt.Fprintf(out, "  root: %s\n", report.Root)
 	if report.PlaywrightReady {
 		fmt.Fprintf(out, "  Playwright tests: %s\n", report.PlaywrightVersion)
@@ -270,10 +321,13 @@ func printDoctor(report DoctorReport, asJSON bool, out, errOut io.Writer, exitCo
 	if report.ArtifactBytes > 0 {
 		fmt.Fprintf(out, "  artifact bytes: %d (%d reclaimable; %d interrupted runs)\n", report.ArtifactBytes, report.ReclaimableBytes, report.InterruptedRuns)
 	}
+	for _, check := range report.Preflight {
+		fmt.Fprintf(out, "  preflight %s: %s (%dms)\n", check.Name, check.Status, check.DurationMS)
+	}
 	for _, warning := range report.Warnings {
 		fmt.Fprintf(out, "  warning: %s\n", warning)
 	}
-	return 0
+	return exitCode
 }
 
 func runInit(args []string, out, errOut io.Writer) int {
