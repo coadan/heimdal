@@ -139,8 +139,13 @@ heimdal session batch --file browser-steps.json --json
 ```
 
 The batch stops at the first failed step and returns the final snapshot or
-delta. Action JSON is compact by default; use `--json=full` only when repeated
-session metadata is needed.
+delta. Safe batches with unambiguous retained refs run as one Playwright code
+block plus one final ref-refresh snapshot while preserving per-step deltas,
+failure attribution, and test-generation locators. Check `execution` and
+`playwright_invocations` in JSON; unsupported or ambiguous batches fall back to
+the stepwise path. Keep `wait --change` outside an atomic batch so its
+retained-snapshot race check remains active. Action JSON is compact by default;
+use `--json=full` only when repeated session metadata is needed.
 
 ## Diagnose from summaries first
 

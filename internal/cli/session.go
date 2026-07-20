@@ -1455,9 +1455,15 @@ func compactSessionArgs(args []string) []string {
 		if len(compact) > 2 {
 			compact[2] = fmt.Sprintf("<text:%d chars>", len(compact[2]))
 		}
-	case "type", "upload":
-		if len(compact) > 1 {
+	case "type":
+		if len(compact) > 2 {
+			compact[2] = fmt.Sprintf("<text:%d chars>", len(compact[2]))
+		} else if len(compact) > 1 {
 			compact[1] = fmt.Sprintf("<text:%d chars>", len(compact[1]))
+		}
+	case "upload":
+		if len(compact) > 1 {
+			compact[1] = fmt.Sprintf("<path:%d chars>", len(compact[1]))
 		}
 	case "eval":
 		if len(compact) > 1 {

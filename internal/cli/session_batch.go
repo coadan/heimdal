@@ -29,19 +29,24 @@ type sessionBatchStep struct {
 }
 
 type sessionBatchStepResult struct {
-	Index   int      `json:"index"`
-	Command []string `json:"command"`
-	Status  string   `json:"status"`
-	Action  int      `json:"action,omitempty"`
-	Output  string   `json:"output,omitempty"`
-	Error   string   `json:"error,omitempty"`
-	Issues  []string `json:"issues,omitempty"`
+	Index           int      `json:"index"`
+	Command         []string `json:"command"`
+	Status          string   `json:"status"`
+	Action          int      `json:"action,omitempty"`
+	Output          string   `json:"output,omitempty"`
+	Snapshot        string   `json:"snapshot,omitempty"`
+	SnapshotMode    string   `json:"snapshot_mode,omitempty"`
+	SnapshotOmitted int      `json:"snapshot_omitted,omitempty"`
+	Error           string   `json:"error,omitempty"`
+	Issues          []string `json:"issues,omitempty"`
 }
 
 type sessionBatchResponse struct {
 	SchemaVersion  int                      `json:"schema_version"`
 	Status         string                   `json:"status"`
 	Session        string                   `json:"session"`
+	Execution      string                   `json:"execution"`
+	Invocations    int                      `json:"playwright_invocations"`
 	Planned        int                      `json:"planned_steps"`
 	Steps          []sessionBatchStepResult `json:"steps"`
 	Snapshot       string                   `json:"snapshot,omitempty"`
@@ -73,19 +78,32 @@ func runSessionBatch(ctx context.Context, args []string, out, errOut io.Writer) 
 	}
 
 	response := sessionBatchResponse{SchemaVersion: 1, Status: "passed", Session: state.Name, Planned: len(document.Steps), Artifact: artifact}
+	if plan, ok := planSessionBatchFast(document, state, options); ok {
+		response.Execution = "atomic"
+		response = executeSessionBatchFast(ctx, project, &state, statePath, plan, options, response)
+		if options.FullJSON {
+			response.SessionDetails = &state
+		}
+		return printSessionBatchResponse(out, errOut, response, options.JSON)
+	}
+	response.Execution = "sequential"
+	initialActionCount := state.ActionCount
 	for index, step := range document.Steps {
 		stepOptions := options.SessionOptions
 		stepOptions.Forwarded = append([]string(nil), step.Args...)
 		stepOptions.Full = stepOptions.Full || step.Full
 		result := executeSessionAction(ctx, project, &state, statePath, step.Command, stepOptions)
 		stepResult := sessionBatchStepResult{
-			Index:   index + 1,
-			Command: compactSessionArgs(append([]string{step.Command}, step.Args...)),
-			Status:  result.Status,
-			Action:  result.Action,
-			Output:  result.Output,
-			Error:   result.Error,
-			Issues:  result.Issues,
+			Index:           index + 1,
+			Command:         compactSessionBatchArgs(append([]string{step.Command}, step.Args...)),
+			Status:          result.Status,
+			Action:          result.Action,
+			Output:          result.Output,
+			Snapshot:        result.Snapshot,
+			SnapshotMode:    result.SnapshotMode,
+			SnapshotOmitted: result.SnapshotOmitted,
+			Error:           result.Error,
+			Issues:          result.Issues,
 		}
 		response.Steps = append(response.Steps, stepResult)
 		if result.Snapshot != "" {
@@ -98,6 +116,7 @@ func runSessionBatch(ctx context.Context, args []string, out, errOut io.Writer) 
 			break
 		}
 	}
+	response.Invocations = state.ActionCount - initialActionCount
 	if options.FullJSON {
 		response.SessionDetails = &state
 	}
@@ -214,6 +233,13 @@ func printSessionBatchResponse(out, errOut io.Writer, response sessionBatchRespo
 			if step.Output != "" {
 				fmt.Fprintf(out, "   %s\n", strings.ReplaceAll(step.Output, "\n", "\n   "))
 			}
+			if step.Snapshot != "" {
+				label := "snapshot"
+				if step.SnapshotMode == "delta" {
+					label = "snapshot delta"
+				}
+				fmt.Fprintf(out, "   %s:\n   %s\n", label, strings.ReplaceAll(step.Snapshot, "\n", "\n   "))
+			}
 			for _, issue := range step.Issues {
 				fmt.Fprintf(errOut, "heimdal: batch step %d issue: %s\n", step.Index, issue)
 			}
@@ -225,7 +251,7 @@ func printSessionBatchResponse(out, errOut io.Writer, response sessionBatchRespo
 			}
 			fmt.Fprintf(out, "%s:\n%s\n", label, response.Snapshot)
 		}
-		fmt.Fprintf(out, "Heimdal session %s batch: %s (%d/%d steps)\n", response.Session, response.Status, len(response.Steps), response.Planned)
+		fmt.Fprintf(out, "Heimdal session %s batch: %s (%d/%d steps, %s, %d Playwright invocations)\n", response.Session, response.Status, len(response.Steps), response.Planned, response.Execution, response.Invocations)
 	}
 	if response.Error != "" {
 		fmt.Fprintln(errOut, "heimdal:", response.Error)

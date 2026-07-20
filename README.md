@@ -244,6 +244,13 @@ heimdal session batch --file browser-steps.json --name qa --json
 
 Batch execution stops at the first failed step. Ordinary action JSON omits
 repeated session metadata; use `--json=full` when that metadata is required.
+When every step has an unambiguous retained semantic locator and a stable
+action shape, Heimdal compiles the batch into one Playwright `run-code`
+invocation, captures a bounded semantic delta after each logical step, and uses
+one final Playwright snapshot to return fresh refs. The response reports
+`execution: "atomic"` and `playwright_invocations: 2`. Arbitrary commands,
+ambiguous refs, expanded/boxed evidence, and change waits use the original
+stepwise path for correctness and report `execution: "sequential"`.
 
 When graduating an exploration, ask Heimdal to reject an incomplete draft:
 

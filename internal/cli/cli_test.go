@@ -434,6 +434,10 @@ func TestCompactSessionCommandRetainsUsefulResultsWithoutSecrets(t *testing.T) {
 	if strings.Join(compactArgs, " ") != "fill e5 <text:13 chars>" {
 		t.Fatalf("compact command args = %#v", compactArgs)
 	}
+	targetedType := compactSessionArgs([]string{"type", "e5", "private token"})
+	if strings.Join(targetedType, " ") != "type e5 <text:13 chars>" {
+		t.Fatalf("compact targeted type args = %#v", targetedType)
+	}
 	evaluation := compactSessionArgs([]string{"eval", "() => localStorage.getItem('token')"})
 	if strings.Join(evaluation, " ") != "eval <function:35 chars>" {
 		t.Fatalf("compact eval args = %#v", evaluation)
