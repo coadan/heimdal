@@ -14,7 +14,7 @@ func TestDefaultArtifactsUseDedicatedRootAndRetention(t *testing.T) {
 	if config.Artifacts.Directory != ".heimdal" {
 		t.Fatalf("default artifact directory = %q", config.Artifacts.Directory)
 	}
-	if !config.Artifacts.Retention.Enabled || config.Artifacts.Retention.MaxAgeDays != 14 || config.Artifacts.Retention.KeepFailures != 20 || config.Artifacts.Retention.MaxBytes != 5*1024*1024*1024 {
+	if !config.Artifacts.Retention.Enabled || config.Artifacts.Retention.MaxAgeDays != 14 || config.Artifacts.Retention.KeepFailures != 20 || config.Artifacts.Retention.MaxBytes != 5*1024*1024*1024 || !config.Artifacts.Retention.ThinRepeatedFailures {
 		t.Fatalf("default retention = %#v", config.Artifacts.Retention)
 	}
 }
@@ -105,8 +105,71 @@ func TestExistingRetentionConfigInheritsDefaultByteBudget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if config.Artifacts.Retention.MaxBytes != 5*1024*1024*1024 || config.Artifacts.Retention.MaxAgeDays != 30 {
+	if config.Artifacts.Retention.MaxBytes != 5*1024*1024*1024 || config.Artifacts.Retention.MaxAgeDays != 30 || !config.Artifacts.Retention.ThinRepeatedFailures {
 		t.Fatalf("loaded retention = %#v", config.Artifacts.Retention)
+	}
+}
+
+func TestRetentionThinsRecentRepeatedFailuresWithoutLosingNewestEvidence(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
+	createFingerprintRun(t, root, "same-oldest", now.Add(-3*time.Hour), "same")
+	createFingerprintRun(t, root, "unique", now.Add(-2*time.Hour), "unique")
+	createFingerprintRun(t, root, "same-newest", now.Add(-time.Hour), "same")
+
+	retention := RetentionConfig{Enabled: true, MaxAgeDays: 14, KeepFailures: 20, ThinRepeatedFailures: true}
+	result, err := collectArtifactGarbage(root, retention, true, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Candidates != 1 || result.Items[0].RunID != "same-oldest" || !strings.Contains(result.Items[0].Reason, "repeated semantic failure") {
+		t.Fatalf("repeated failure plan = %#v", result)
+	}
+}
+
+func TestRunArtifactDeduplicationHardLinksExactLargeEvidence(t *testing.T) {
+	runDir := t.TempDir()
+	reportDir := filepath.Join(runDir, "report", "data")
+	resultDir := filepath.Join(runDir, "test-results", "case")
+	for _, directory := range []string{reportDir, resultDir} {
+		if err := os.MkdirAll(directory, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	payload := make([]byte, 128*1024)
+	for index := range payload {
+		payload[index] = byte(index % 251)
+	}
+	reportTrace := filepath.Join(reportDir, "hash.zip")
+	resultTrace := filepath.Join(resultDir, "trace.zip")
+	different := filepath.Join(resultDir, "different.zip")
+	for _, path := range []string{reportTrace, resultTrace} {
+		if err := os.WriteFile(path, payload, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	payload[len(payload)-1]++
+	if err := os.WriteFile(different, payload, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	files, bytes, issue := deduplicateRunArtifacts(runDir)
+	if files != 1 || bytes != 128*1024 || issue != "" {
+		t.Fatalf("deduplication = %d files, %d bytes, %q", files, bytes, issue)
+	}
+	reportInfo, err := os.Stat(reportTrace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resultInfo, err := os.Stat(resultTrace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	differentInfo, err := os.Stat(different)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(reportInfo, resultInfo) || os.SameFile(reportInfo, differentInfo) {
+		t.Fatalf("deduplicated inode identity is wrong")
 	}
 }
 

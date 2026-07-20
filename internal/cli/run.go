@@ -93,16 +93,19 @@ type RunProgress struct {
 }
 
 type Artifacts struct {
-	RunDir          string   `json:"run_dir"`
-	Stdout          string   `json:"stdout"`
-	Stderr          string   `json:"stderr"`
-	Result          string   `json:"result"`
-	TestOutput      string   `json:"test_output"`
-	Report          string   `json:"report"`
-	Files           []string `json:"files,omitempty"`
-	RunBytes        int64    `json:"run_bytes,omitempty"`
-	TestOutputBytes int64    `json:"test_output_bytes,omitempty"`
-	ReportBytes     int64    `json:"report_bytes,omitempty"`
+	RunDir             string   `json:"run_dir"`
+	Stdout             string   `json:"stdout"`
+	Stderr             string   `json:"stderr"`
+	Result             string   `json:"result"`
+	TestOutput         string   `json:"test_output"`
+	Report             string   `json:"report"`
+	Files              []string `json:"files,omitempty"`
+	RunBytes           int64    `json:"run_bytes,omitempty"`
+	TestOutputBytes    int64    `json:"test_output_bytes,omitempty"`
+	ReportBytes        int64    `json:"report_bytes,omitempty"`
+	DeduplicatedFiles  int      `json:"deduplicated_files,omitempty"`
+	DeduplicatedBytes  int64    `json:"deduplicated_bytes,omitempty"`
+	DeduplicationError string   `json:"deduplication_error,omitempty"`
 }
 
 func executeRun(ctx context.Context, project Project, options RunOptions, out, errOut io.Writer) (RunResult, error) {
@@ -272,6 +275,7 @@ func executeRun(ctx context.Context, project Project, options RunOptions, out, e
 	if err != nil {
 		result.MetadataError = err.Error()
 	}
+	result.Artifacts.DeduplicatedFiles, result.Artifacts.DeduplicatedBytes, result.Artifacts.DeduplicationError = deduplicateRunArtifacts(runDir)
 	result.Artifacts.Files = artifactFiles(runDir)
 	result.Evidence, result.EvidenceErrors = collectRunEvidence(stdoutPath, stderrPath, runDir, project.Root)
 	result.FailureContext = failureContextExcerpt(result.Artifacts.Files)
@@ -280,7 +284,7 @@ func executeRun(ctx context.Context, project Project, options RunOptions, out, e
 			result.NextCommand = ""
 		}
 	}
-	result.Artifacts.RunBytes = directoryBytes(runDir)
+	result.Artifacts.RunBytes = directoryBytes(runDir) - result.Artifacts.DeduplicatedBytes
 	result.Artifacts.TestOutputBytes = directoryBytes(testOutput)
 	result.Artifacts.ReportBytes = directoryBytes(report)
 	if err := writeJSON(result.Artifacts.Result, result); err != nil {

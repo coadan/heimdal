@@ -70,10 +70,11 @@ type ArtifactConfig struct {
 }
 
 type RetentionConfig struct {
-	Enabled      bool  `json:"enabled"`
-	MaxAgeDays   int   `json:"max_age_days"`
-	KeepFailures int   `json:"keep_failures"`
-	MaxBytes     int64 `json:"max_bytes"`
+	Enabled              bool  `json:"enabled"`
+	MaxAgeDays           int   `json:"max_age_days"`
+	KeepFailures         int   `json:"keep_failures"`
+	MaxBytes             int64 `json:"max_bytes"`
+	ThinRepeatedFailures bool  `json:"thin_repeated_failures"`
 }
 
 type Project struct {
@@ -101,7 +102,7 @@ func defaultConfig(playwrightConfig string) Config {
 		},
 		Artifacts: ArtifactConfig{
 			Directory: defaultArtifactDir,
-			Retention: RetentionConfig{Enabled: true, MaxAgeDays: 14, KeepFailures: 20, MaxBytes: 5 * 1024 * 1024 * 1024},
+			Retention: RetentionConfig{Enabled: true, MaxAgeDays: 14, KeepFailures: 20, MaxBytes: 5 * 1024 * 1024 * 1024, ThinRepeatedFailures: true},
 		},
 	}
 }

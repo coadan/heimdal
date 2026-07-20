@@ -244,9 +244,12 @@ diagnosing the newest failure. Pin only evidence that must outlive normal
 retention, then unpin it with `runs pin <run-id> --remove`.
 
 Use `heimdal gc --dry-run` before manual artifact cleanup. Retention preserves
-pins, active runs, recent runs, and the configured number of distinct failure
-fingerprints within its byte budget. Pruned runs remain as compact indexed
-history, so use `runs list` rather than scanning or deleting `.heimdal` paths.
+pins, active runs, recent non-duplicate runs, and the configured number of
+distinct failure fingerprints within its byte budget. By default it compacts
+older copies of a repeated semantic failure while retaining the newest full
+evidence; exact within-run copies are hard-linked. Pruned runs remain as compact
+indexed history, so use `runs list` rather than scanning or deleting `.heimdal`
+paths.
 
 Use `session save --test PATH --ready` to audit the generated TypeScript draft.
 It fails readiness when assertions are missing or coordinate, stale-ref,

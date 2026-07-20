@@ -124,10 +124,12 @@ only when inspecting a direct trace path or requesting trace data separately.
 
 Artifact retention is enabled by default: runs older than 14 days are eligible
 for removal, retained run artifacts are bounded to 5 GiB, and the newest full
-run for up to 20 distinct failure fingerprints remains protected. Pinned,
+run for up to 20 distinct failure fingerprints remains protected. Older copies
+of the same semantic failure are compacted, and exact trace/video/screenshot
+copies within a run are hard-linked without changing their paths. Pinned,
 active, and unrecognized directories are never removed. Pruned runs keep small
-history records, so `runs list` can still group repeated failures without
-retaining every trace and video. Inspect any cleanup first:
+history records, so `runs list` can still group repeated failures. Inspect any
+cleanup first:
 
 ```bash
 heimdal gc --dry-run
@@ -371,7 +373,8 @@ interactive QA can use this shape:
       "enabled": true,
       "max_age_days": 14,
       "keep_failures": 20,
-      "max_bytes": 5368709120
+      "max_bytes": 5368709120,
+      "thin_repeated_failures": true
     }
   }
 }
@@ -381,7 +384,8 @@ Heimdal allocates a free port when a run or session needs one. `${PORT}` and
 other configured environment templates are expanded for the app command.
 `provenance_env` records only each listed variable's name and set/unset state
 in run evidence; values are never persisted. Set `artifacts.retention.enabled`
-to `false` to disable automatic cleanup; manual `heimdal gc` remains available.
+to `false` to disable automatic cleanup; set `thin_repeated_failures` to `false`
+to keep every recent repeated trace. Manual `heimdal gc` remains available.
 Doctor checks execute argument arrays directly from the project root; they are
 never shell strings.
 

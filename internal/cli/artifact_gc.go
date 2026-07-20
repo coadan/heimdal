@@ -29,7 +29,9 @@ Options:
 
 Pinned runs, active runs, session evidence, and unrecognized directories are
 never removed. GC finalizes stale session state and removes dead global indexes.
-Pruned runs keep compact inventory summaries under .heimdal/.history.
+Older copies of a repeated semantic failure are compacted by default, while its
+newest full run is retained. Pruned runs keep compact inventory summaries under
+.heimdal/.history.
 Automatic retention uses artifacts.retention from .heimdal.json and runs at
 most once per day.
 `
@@ -309,12 +311,24 @@ func artifactGarbagePlan(runs []artifactRun, retention RetentionConfig, now time
 	sort.Slice(failures, func(left, right int) bool { return failures[left].StartedAt.After(failures[right].StartedAt) })
 	protectedFailures := make(map[string]bool)
 	protectedFingerprints := make(map[string]bool)
+	seenFingerprints := make(map[string]bool)
+	repeatedFailures := make(map[string]bool)
 	for _, failure := range failures {
 		fingerprint := failure.Fingerprint
+		if fingerprint != "" {
+			if seenFingerprints[fingerprint] {
+				repeatedFailures[failure.ID] = true
+			} else {
+				seenFingerprints[fingerprint] = true
+			}
+		}
 		if fingerprint == "" {
 			fingerprint = "run:" + failure.ID
 		}
-		if protectedFingerprints[fingerprint] || len(protectedFingerprints) >= retention.KeepFailures {
+		if protectedFingerprints[fingerprint] {
+			continue
+		}
+		if len(protectedFingerprints) >= retention.KeepFailures {
 			continue
 		}
 		protectedFingerprints[fingerprint] = true
@@ -324,7 +338,15 @@ func artifactGarbagePlan(runs []artifactRun, retention RetentionConfig, now time
 	selected := make(map[string]bool)
 	candidates := make([]artifactGCCandidate, 0)
 	for _, run := range runs {
-		if run.Pinned || run.Active || protectedFailures[run.ID] || run.StartedAt.After(cutoff) {
+		if run.Pinned || run.Active || protectedFailures[run.ID] {
+			continue
+		}
+		if retention.ThinRepeatedFailures && repeatedFailures[run.ID] {
+			selected[run.ID] = true
+			candidates = append(candidates, artifactGCCandidate{Run: run, Reason: "older copy of repeated semantic failure " + run.Fingerprint})
+			continue
+		}
+		if run.StartedAt.After(cutoff) {
 			continue
 		}
 		selected[run.ID] = true
