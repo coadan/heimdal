@@ -30,7 +30,8 @@ Options:
 
 Without --json, Heimdal opens Playwright's interactive trace viewer. With
 --json, it reports the resolved path, run timing and failure, action counts,
-the failing action with nearby actions, and snapshot/resource counts.
+the terminal error, its matching or contextual action, caught-probe count,
+nearby relevant actions, and snapshot/resource counts.
 `
 
 type traceOptions struct {
@@ -44,13 +45,14 @@ type traceOptions struct {
 }
 
 type TraceActionSummary struct {
-	Index       int     `json:"index"`
-	APIName     string  `json:"api_name,omitempty"`
-	Locator     string  `json:"locator,omitempty"`
-	StartTimeMS float64 `json:"start_time_ms,omitempty"`
-	EndTimeMS   float64 `json:"end_time_ms,omitempty"`
-	DurationMS  float64 `json:"duration_ms,omitempty"`
-	Error       string  `json:"error,omitempty"`
+	Index          int     `json:"index"`
+	APIName        string  `json:"api_name,omitempty"`
+	Locator        string  `json:"locator,omitempty"`
+	StartTimeMS    float64 `json:"start_time_ms,omitempty"`
+	EndTimeMS      float64 `json:"end_time_ms,omitempty"`
+	DurationMS     float64 `json:"duration_ms,omitempty"`
+	Error          string  `json:"error,omitempty"`
+	Classification string  `json:"classification,omitempty"`
 }
 
 type TraceSummary struct {
@@ -60,11 +62,15 @@ type TraceSummary struct {
 	SizeBytes     int64                  `json:"size_bytes"`
 	RunStatus     string                 `json:"run_status,omitempty"`
 	RunFailure    string                 `json:"run_failure,omitempty"`
+	TerminalError string                 `json:"terminal_error,omitempty"`
+	FailureSource string                 `json:"failure_source,omitempty"`
 	StartedAt     string                 `json:"started_at,omitempty"`
 	FinishedAt    string                 `json:"finished_at,omitempty"`
 	DurationMS    int64                  `json:"duration_ms,omitempty"`
 	ActionCount   int                    `json:"action_count"`
 	FailingAction *TraceActionSummary    `json:"failing_action,omitempty"`
+	CaughtProbes  []TraceActionSummary   `json:"caught_probes,omitempty"`
+	CaughtCount   int                    `json:"caught_probe_count"`
 	NearbyActions []TraceActionSummary   `json:"nearby_actions,omitempty"`
 	Snapshots     []TraceSnapshotSummary `json:"snapshots,omitempty"`
 	SnapshotCount int                    `json:"snapshot_count"`
@@ -106,6 +112,7 @@ func resolveTrace(project Project, runID, tracePath string) (string, *RunResult,
 	if err != nil {
 		return "", nil, err
 	}
+	enrichRunResult(&result)
 	tracePath, err = findTrace(result.Artifacts.RunDir)
 	if err != nil {
 		return "", nil, err
@@ -158,17 +165,22 @@ func summarizeTrace(tracePath string, result *RunResult, aroundFailure int) (Tra
 	if err != nil {
 		return TraceSummary{}, fmt.Errorf("summarize Playwright trace %s: %w", tracePath, err)
 	}
-	collector.finish(&summary, aroundFailure)
+	failure := summary.RunFailure
+	if result != nil && result.PrimaryFailure != nil {
+		failure += "\n" + result.PrimaryFailure.Message
+	}
+	collector.finish(&summary, aroundFailure, failure)
 	return summary, nil
 }
 
 type traceCollector struct {
-	actions       []collectedTraceAction
-	byCallID      map[string]int
-	snapshotCount int
-	resourceCount int
-	traceFiles    []string
-	snapshots     []collectedTraceSnapshot
+	actions        []collectedTraceAction
+	byCallID       map[string]int
+	snapshotCount  int
+	resourceCount  int
+	traceFiles     []string
+	snapshots      []collectedTraceSnapshot
+	terminalErrors []string
 }
 
 type collectedTraceAction struct {
@@ -263,6 +275,10 @@ func (collector *traceCollector) readEvents(reader io.Reader) error {
 			collector.addAction(event)
 		case "after":
 			collector.finishAction(event)
+		case "error":
+			if message := truncateTraceValue(stripANSI(event.Message), 1000); message != "" {
+				collector.terminalErrors = append(collector.terminalErrors, message)
+			}
 		case "action":
 			if len(event.Metadata) > 0 {
 				var metadata traceEvent
@@ -289,6 +305,7 @@ type traceEvent struct {
 	Error     json.RawMessage `json:"error"`
 	Metadata  json.RawMessage `json:"metadata"`
 	Snapshot  json.RawMessage `json:"snapshot"`
+	Message   string          `json:"message"`
 }
 
 func (collector *traceCollector) addAction(event traceEvent) {
@@ -493,7 +510,7 @@ func truncateTraceValue(value string, limit int) string {
 	return value[:limit] + "…"
 }
 
-func (collector *traceCollector) finish(summary *TraceSummary, aroundFailure int) {
+func (collector *traceCollector) finish(summary *TraceSummary, aroundFailure int, terminalFailure string) {
 	sort.Strings(collector.traceFiles)
 	sort.SliceStable(collector.actions, func(left, right int) bool {
 		return collector.actions[left].StartTimeMS < collector.actions[right].StartTimeMS
@@ -505,45 +522,65 @@ func (collector *traceCollector) finish(summary *TraceSummary, aroundFailure int
 	summary.SnapshotCount = collector.snapshotCount
 	summary.ResourceCount = collector.resourceCount
 	summary.TraceFiles = collector.traceFiles
-	failure := -1
-	for index := range collector.actions {
-		if collector.actions[index].Error != "" && collector.actions[index].Locator != "" {
-			failure = index
-			break
-		}
+	terminalFailure = collector.causalTerminalError(terminalFailure)
+	if terminalFailure != "" {
+		summary.TerminalError = truncateTraceValue(terminalFailure, 1000)
 	}
-	if failure < 0 {
-		for index := range collector.actions {
-			if collector.actions[index].Error != "" {
-				failure = index
-				break
-			}
-		}
+	failure, matched := collector.causalFailure(terminalFailure)
+	if terminalFailure != "" && !matched {
+		failure = collector.lastRelevantAction()
 	}
 	if failure < 0 {
 		return
 	}
 	failing := collector.actions[failure]
-	for _, action := range collector.actions {
-		overlaps := action.StartTimeMS <= failing.EndTimeMS+10 && action.EndTimeMS >= failing.StartTimeMS-10
-		if overlaps && len(action.Error) > len(failing.Error) {
-			failing.Error = action.Error
+	if matched {
+		failing.Classification = "terminal"
+		summary.FailureSource = "trace_error"
+	} else if terminalFailure != "" {
+		failing.Classification = "terminal_context"
+		failing.Error = truncateTraceValue(terminalFailure, 500)
+		summary.FailureSource = "terminal_error"
+	} else {
+		failing.Classification = "trace_error"
+		summary.FailureSource = "trace_unresolved"
+	}
+	if matched || terminalFailure == "" {
+		for _, action := range collector.actions {
+			overlaps := action.StartTimeMS <= failing.EndTimeMS+10 && action.EndTimeMS >= failing.StartTimeMS-10
+			if overlaps && len(action.Error) > len(failing.Error) {
+				failing.Error = action.Error
+			}
 		}
 	}
 	summary.FailingAction = &failing.TraceActionSummary
+	for index, action := range collector.actions {
+		if index >= failure || action.Error == "" || !traceAssertion(action) {
+			continue
+		}
+		action.Classification = "caught_probe"
+		summary.CaughtCount++
+		if len(summary.CaughtProbes) < 5 {
+			summary.CaughtProbes = append(summary.CaughtProbes, action.TraceActionSummary)
+		}
+	}
 	if aroundFailure < 0 {
 		aroundFailure = 0
 	}
-	start := failure - aroundFailure
-	if start < 0 {
-		start = 0
+	var nearbyBefore []TraceActionSummary
+	for index := failure - 1; index >= 0 && len(nearbyBefore) < aroundFailure; index-- {
+		if traceRelevantAction(collector.actions[index]) {
+			nearbyBefore = append(nearbyBefore, collector.actions[index].TraceActionSummary)
+		}
 	}
-	end := failure + aroundFailure + 1
-	if end > len(collector.actions) {
-		end = len(collector.actions)
+	for index := len(nearbyBefore) - 1; index >= 0; index-- {
+		summary.NearbyActions = append(summary.NearbyActions, nearbyBefore[index])
 	}
-	for _, action := range collector.actions[start:end] {
-		summary.NearbyActions = append(summary.NearbyActions, action.TraceActionSummary)
+	summary.NearbyActions = append(summary.NearbyActions, failing.TraceActionSummary)
+	for index := failure + 1; index < len(collector.actions) && len(summary.NearbyActions) < len(nearbyBefore)+1+aroundFailure; index++ {
+		if traceRelevantAction(collector.actions[index]) {
+			summary.NearbyActions = append(summary.NearbyActions, collector.actions[index].TraceActionSummary)
+		}
 	}
 	failingCallID := failing.CallID
 	for _, snapshot := range collector.snapshots {
@@ -568,6 +605,114 @@ func (collector *traceCollector) finish(summary *TraceSummary, aroundFailure int
 			}
 		}
 	}
+}
+
+func (collector *traceCollector) causalFailure(terminalFailure string) (int, bool) {
+	best, bestScore := -1, -1
+	for index, action := range collector.actions {
+		if action.Error == "" {
+			continue
+		}
+		score := traceFailureAffinity(action.Error, terminalFailure)
+		// Equal evidence resolves to the latest error. A caught assertion can
+		// therefore never eclipse a later terminal timeout merely by appearing
+		// first in the trace.
+		if score >= bestScore {
+			best, bestScore = index, score
+		}
+	}
+	if terminalFailure == "" {
+		return best, false
+	}
+	return best, bestScore >= 2
+}
+
+func (collector *traceCollector) causalTerminalError(runFailure string) string {
+	if len(collector.terminalErrors) == 0 {
+		if genericProcessFailure(runFailure) {
+			return ""
+		}
+		return strings.TrimSpace(runFailure)
+	}
+	best, bestScore := collector.terminalErrors[len(collector.terminalErrors)-1], -1
+	for _, candidate := range collector.terminalErrors {
+		score := traceFailureAffinity(candidate, runFailure)
+		if score > bestScore {
+			best, bestScore = candidate, score
+		}
+	}
+	return best
+}
+
+func genericProcessFailure(value string) bool {
+	value = strings.TrimSpace(strings.ToLower(value))
+	return value == "" || value == "failed" || value == "test failed" || value == "playwright test failed" || strings.HasPrefix(value, "exit status ") || strings.HasPrefix(value, "signal: ")
+}
+
+func (collector *traceCollector) lastRelevantAction() int {
+	for index := len(collector.actions) - 1; index >= 0; index-- {
+		if traceRelevantAction(collector.actions[index]) {
+			return index
+		}
+	}
+	return -1
+}
+
+func traceRelevantAction(action collectedTraceAction) bool {
+	name := strings.ToLower(strings.TrimSpace(action.APIName))
+	if name == "" && action.Locator == "" {
+		return false
+	}
+	return !strings.HasPrefix(name, "fixture ") &&
+		!strings.HasPrefix(name, "attach ") &&
+		!strings.Contains(name, "hook") &&
+		!strings.Contains(name, "cleanup") &&
+		name != "close context" && name != "close page"
+}
+
+func traceFailureAffinity(actionError, terminalFailure string) int {
+	action := strings.ToLower(strings.TrimSpace(actionError))
+	terminal := strings.ToLower(strings.TrimSpace(terminalFailure))
+	if action == "" || terminal == "" {
+		return 0
+	}
+	if strings.Contains(terminal, action) || strings.Contains(action, terminal) {
+		return 1000
+	}
+	actionTokens := traceFailureTokens(action)
+	terminalTokens := traceFailureTokens(terminal)
+	score := 0
+	for token := range actionTokens {
+		if terminalTokens[token] {
+			score++
+		}
+	}
+	return score
+}
+
+func traceFailureTokens(value string) map[string]bool {
+	tokens := map[string]bool{}
+	for _, token := range strings.FieldsFunc(value, func(char rune) bool {
+		return !(char >= 'a' && char <= 'z') && !(char >= '0' && char <= '9')
+	}) {
+		switch {
+		case strings.HasPrefix(token, "timeout"), strings.HasPrefix(token, "timed"):
+			token = "timeout"
+		case strings.HasPrefix(token, "wait"):
+			token = "wait"
+		case strings.HasPrefix(token, "expect"):
+			token = "expect"
+		}
+		if len(token) >= 4 && token != "error" && token != "received" {
+			tokens[token] = true
+		}
+	}
+	return tokens
+}
+
+func traceAssertion(action collectedTraceAction) bool {
+	value := strings.ToLower(action.APIName + "\n" + action.Error)
+	return strings.Contains(value, "expect") || strings.Contains(value, "assert")
 }
 
 func traceSnapshotIncluded(snapshots []TraceSnapshotSummary, candidate TraceSnapshotSummary) bool {

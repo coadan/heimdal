@@ -64,12 +64,21 @@ session save --test output.
 	"timeline": `Synthesize an ordered session timeline from retained action evidence
 
 Usage:
-  heimdal session timeline [NAME] [--dir PATH] [--json]
+  heimdal session timeline [NAME] [--dir PATH] [--failures] [--category NAME]
+                           [--from N] [--to N] [--limit N] [--json|--json=full]
+
+The default is a bounded phase/failure/recent-change view. Use filters to page
+chronologically; next_from identifies the next sequence. --json=full opts into
+all retained entries, including evidence summaries and snapshot paths.
 `,
 	"report": `Summarize session navigation, interactions, assertions, and failures
 
 Usage:
-  heimdal session report [NAME] [--dir PATH] [--json]
+  heimdal session report [NAME] [--dir PATH] [--failures] [--category NAME]
+                         [--from N] [--to N] [--limit N] [--json|--json=full]
+
+The default report contains bounded phases, causal failures, and recent
+meaningful changes. Successful zero-result diagnostic checks are not issues.
 `,
 	"checkpoint": `Add a durable label to the current session timeline
 

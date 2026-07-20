@@ -297,7 +297,8 @@ func compactSessionGrammarOutput(output string) string {
 	lines := strings.Split(strings.TrimSpace(stripANSI(output)), "\n")
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "Unknown command") || strings.HasPrefix(line, "Error:") {
+		lower := strings.ToLower(line)
+		if strings.HasPrefix(lower, "unknown command") || strings.HasPrefix(lower, "unknown option") || strings.HasPrefix(lower, "error:") {
 			return truncateDisplay(line, 400)
 		}
 	}

@@ -28,6 +28,9 @@ JSON expose structured test counts, a primary failure fingerprint, deduplicated
 warnings, artifact sizes, and a bounded Playwright failure-context excerpt; use
 those fields before reading log tails. Failed reports also fold in the retained
 trace's failing action, locator, nearby actions, and DOM excerpt when available.
+A terminal runner error takes precedence over caught assertion probes; inspect
+`failure_source`, `classification`, and `caught_probe_count` before treating an
+errored trace action as causal.
 A long JSON run emits progress on stderr, and `report --run ID --json` can be
 polled for structured live progress.
 
@@ -137,8 +140,13 @@ timeline before reading individual action logs:
 heimdal session checkpoint "entered checkout"
 heimdal session timeline --json
 heimdal session report --json
+heimdal session timeline --failures --limit 20 --json
 ```
 
+Timeline and report output is a bounded phase/failure/recent-change view by
+default. Page long histories with `--from`, `--to`, `--limit`, `--category`, or
+`--failures`; follow `next_from`. Use `--json=full` only when every retained
+entry is necessary. A successful zero-error console check is not an issue.
 Checkpoints label recoverable session state and appear in reports; they do not
 make arbitrary repository test fixtures resumable.
 
@@ -198,11 +206,13 @@ artifacts:
 heimdal report --run latest --json
 ```
 
-The report includes bounded trace diagnosis when available. Use `heimdal trace
-inspect --run latest --around-failure` only for a separate trace packet or a
-direct trace path. Inspect raw artifacts only when these summaries point to
-them. Never put secrets in commands, screenshots, traces, metadata, or
-generated tests.
+The report includes bounded trace diagnosis when available. It correlates a
+terminal test error with a matching trace error or the last relevant action and
+classifies earlier continued-past assertions as caught probes. Use `heimdal
+trace inspect --run latest --around-failure` only for a separate trace packet or
+a direct trace path. Inspect raw artifacts only when these summaries point to
+them. Never put secrets in commands, screenshots, traces, metadata, or generated
+tests.
 
 Use the indexed history before scanning `.heimdal` directly:
 

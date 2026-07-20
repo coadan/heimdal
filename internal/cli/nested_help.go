@@ -58,7 +58,11 @@ Usage:
 	"trace inspect": `Extract bounded failure-centered evidence from a retained Playwright trace
 
 Usage:
-  heimdal trace inspect [--dir PATH] [--run ID|latest|latest-failed] [--around-failure N] [--json]
+  heimdal trace inspect [--dir PATH] [--run ID|latest|latest-failed] [--around-failure] [--json]
+
+Terminal runner errors are correlated with trace errors or the last relevant
+action. Continued-past assertion failures are reported separately as caught
+probes.
 `,
 }
 

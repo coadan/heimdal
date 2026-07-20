@@ -82,6 +82,12 @@ one. For a failed run with a retained trace, it also folds in the failing
 Playwright action and locator, nearby actions, and relevant DOM excerpt; use
 `--json=full` when the retained raw detail is required inline.
 
+Failure attribution prefers the terminal runner error recorded in the trace.
+If a helper throws after a successful Playwright action, that action is labeled
+`terminal_context`; earlier failed assertions that execution continued past are
+counted separately as `caught_probe` evidence instead of replacing the real
+failure.
+
 Each run gets an isolated artifact directory under `.heimdal/` by default.
 The final JSON result, stdout, stderr, Playwright output, report, screenshots,
 videos, and traces remain there. While a test is still running, its live status
@@ -193,12 +199,18 @@ hundreds of action files:
 heimdal session checkpoint "entered checkout"
 heimdal session timeline --json
 heimdal session report --json
+heimdal session timeline --failures --limit 20 --json
+heimdal session timeline --category evidence --from 200 --limit 50 --json
 ```
 
-The timeline groups navigation, interaction, waits, evidence, console checks,
-failures, and checkpoints, and maps recorded actions to generated-test line
-numbers. Checkpoints are durable labels, not promises that an arbitrary
-Playwright test fixture can resume from that browser state.
+The default timeline is a bounded phase, failure, and recent-change summary;
+`next_from` continues an explicitly filtered page. Filters include
+`--failures`, `--category`, `--from`, `--to`, and `--limit`. Use
+`--json=full` only when every retained entry and evidence summary is required.
+Reports keep phases, failures, and recent meaningful changes bounded, and do
+not treat a successful `console error` check with zero errors as an issue.
+Checkpoints are durable labels, not promises that an arbitrary Playwright test
+fixture can resume from that browser state.
 
 For layout decisions, request one bounded measurement packet instead of
 iterating through screenshots and ad hoc evaluation scripts:

@@ -105,3 +105,87 @@ func TestSummarizeTraceReportsFailureContextWithoutExtractingArchive(t *testing.
 		t.Fatalf("trace artifacts = %#v", summary.Artifacts)
 	}
 }
+
+func TestSummarizeTraceAttributesTerminalFailureInsteadOfCaughtProbe(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "trace.zip")
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	archive := zip.NewWriter(file)
+	events, err := archive.Create("test.trace")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range []string{
+		`{"type":"before","callId":"probe","startTime":14800,"apiName":"expect.toBe","params":{"selector":"internal:role=button[name=Probe]"}}`,
+		`{"type":"after","callId":"probe","endTime":14820,"error":{"message":"Error: expect(false).toBe(true)"}}`,
+		`{"type":"before","callId":"continued","startTime":20000,"apiName":"locator.click","params":{"selector":"internal:role=button[name=Continue]"}}`,
+		`{"type":"after","callId":"continued","endTime":20020}`,
+		`{"type":"before","callId":"terminal","startTime":66000,"apiName":"locator.waitFor","params":{"selector":"internal:text=Quest point 4"}}`,
+		`{"type":"after","callId":"terminal","endTime":67000,"error":{"message":"TimeoutError: Timed out waiting for generated Quest point 4"}}`,
+	} {
+		if _, err := io.WriteString(events, line+"\n"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := archive.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	result := RunResult{Status: "failed", Failure: "TimeoutError: Timed out waiting for generated Quest point 4", PrimaryFailure: &PrimaryFailure{Message: "TimeoutError: Timed out waiting for generated Quest point 4"}}
+	summary, err := summarizeTrace(path, &result, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.FailingAction == nil || summary.FailingAction.Index != 3 || summary.FailingAction.Classification != "terminal" {
+		t.Fatalf("terminal failure = %#v", summary.FailingAction)
+	}
+	if summary.CaughtCount != 1 || len(summary.CaughtProbes) != 1 || summary.CaughtProbes[0].Index != 1 || summary.CaughtProbes[0].Classification != "caught_probe" {
+		t.Fatalf("caught probes = %#v (%d)", summary.CaughtProbes, summary.CaughtCount)
+	}
+}
+
+func TestSummarizeTraceAnchorsRunnerErrorAfterCaughtProbe(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "trace.zip")
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	archive := zip.NewWriter(file)
+	events, err := archive.Create("test.trace")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range []string{
+		`{"type":"before","callId":"probe","startTime":14800,"apiName":"expect.toBe"}`,
+		`{"type":"after","callId":"probe","endTime":14820,"error":{"message":"Error: expect(false).toBe(true)"}}`,
+		`{"type":"before","callId":"cause","startTime":59000,"class":"Frame","method":"click","params":{"selector":"internal:role=button[name=Continue]"}}`,
+		`{"type":"after","callId":"cause","endTime":59020}`,
+		`{"type":"error","message":"Error: Timed out waiting for generated Quest point 4"}`,
+		`{"type":"before","callId":"cleanup","startTime":60000,"title":"Fixture \"browser\""}`,
+		`{"type":"after","callId":"cleanup","endTime":60010}`,
+	} {
+		if _, err := io.WriteString(events, line+"\n"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := archive.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	summary, err := summarizeTrace(path, &RunResult{Status: "failed", Failure: "exit status 1"}, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.FailingAction == nil || summary.FailingAction.Index != 2 || summary.FailingAction.Classification != "terminal_context" || !strings.Contains(summary.FailingAction.Error, "Quest point 4") {
+		t.Fatalf("terminal context = %#v", summary.FailingAction)
+	}
+	if summary.FailureSource != "terminal_error" || !strings.Contains(summary.TerminalError, "Quest point 4") || summary.CaughtCount != 1 {
+		t.Fatalf("terminal attribution = %#v", summary)
+	}
+}

@@ -297,6 +297,15 @@ Measure options:
   --session NAME   Named browser session
   --json           Print bounded structured layout evidence
 
+Timeline/report options:
+  --failures       Return only failed actions
+  --category NAME  Filter by navigation, interaction, wait, evidence, assertion,
+                   console, checkpoint, or other
+  --from N         Start at action sequence N
+  --to N           Stop at action sequence N
+  --limit N        Return at most N entries (maximum 200)
+  --json=full      Opt into the complete retained timeline
+
 Examples:
   heimdal session group start --actors host,guest
   heimdal session click --actor guest e12

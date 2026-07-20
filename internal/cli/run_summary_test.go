@@ -55,9 +55,20 @@ func TestCompactRunReportOmitsRawEvidenceIndexes(t *testing.T) {
 	compact := compactRunReport(RunResult{
 		StdoutTail: "large stdout", StderrTail: "large stderr",
 		Artifacts: Artifacts{RunDir: "/tmp/run", Files: []string{"/tmp/run/trace.zip"}},
+		TraceDiagnosis: &TraceSummary{
+			FailingAction: &TraceActionSummary{Index: 3, Error: strings.Repeat("failure ", 100)},
+			CaughtCount:   8,
+			CaughtProbes:  []TraceActionSummary{{Index: 1}, {Index: 2}},
+			NearbyActions: []TraceActionSummary{{Index: 1}, {Index: 2}, {Index: 3}, {Index: 4}, {Index: 5}},
+			Snapshots:     []TraceSnapshotSummary{{Excerpt: strings.Repeat("DOM ", 400)}, {Excerpt: "second"}},
+			TraceFiles:    []string{"test.trace", "0-trace.trace"},
+		},
 	}).(RunResult)
 	if compact.StdoutTail != "" || compact.StderrTail != "" || compact.Artifacts.Files != nil || compact.Artifacts.RunDir != "/tmp/run" {
 		t.Fatalf("compact report = %#v", compact)
+	}
+	if compact.TraceDiagnosis == nil || compact.TraceDiagnosis.CaughtCount != 8 || compact.TraceDiagnosis.CaughtProbes != nil || len(compact.TraceDiagnosis.NearbyActions) != 3 || len(compact.TraceDiagnosis.Snapshots) != 1 || len(compact.TraceDiagnosis.Snapshots[0].Excerpt) > 603 || compact.TraceDiagnosis.TraceFiles != nil {
+		t.Fatalf("compact trace diagnosis = %#v", compact.TraceDiagnosis)
 	}
 	_, asJSON, fullJSON, runID, err := parseReportOptions([]string{"--run", "run-1", "--json=full"})
 	if err != nil || !asJSON || !fullJSON || runID != "run-1" {

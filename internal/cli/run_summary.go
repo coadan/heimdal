@@ -66,7 +66,12 @@ func compactRunReport(report any) any {
 	case RunResult:
 		value.StdoutTail = ""
 		value.StderrTail = ""
+		value.FailureContext = truncateTraceValue(value.FailureContext, 1200)
 		value.Artifacts.Files = nil
+		if value.TraceDiagnosis != nil {
+			compact := compactTraceDiagnosis(*value.TraceDiagnosis)
+			value.TraceDiagnosis = &compact
+		}
 		return value
 	case RunManifest:
 		value.Artifacts.Files = nil
@@ -74,6 +79,61 @@ func compactRunReport(report any) any {
 	default:
 		return report
 	}
+}
+
+func compactTraceDiagnosis(summary TraceSummary) TraceSummary {
+	if summary.FailingAction != nil {
+		failing := *summary.FailingAction
+		summary.FailingAction = &failing
+	}
+	summary.NearbyActions = append([]TraceActionSummary(nil), summary.NearbyActions...)
+	summary.Snapshots = append([]TraceSnapshotSummary(nil), summary.Snapshots...)
+	summary.RunFailure = truncateTraceValue(summary.RunFailure, 500)
+	summary.TerminalError = truncateTraceValue(summary.TerminalError, 500)
+	summary.TraceFiles = nil
+	summary.CaughtProbes = nil
+	if len(summary.NearbyActions) > 3 {
+		failure := 0
+		failingIndex := -1
+		if summary.FailingAction != nil {
+			failingIndex = summary.FailingAction.Index
+		}
+		for index, action := range summary.NearbyActions {
+			if action.Classification == "terminal" || action.Classification == "terminal_context" || action.Index == failingIndex {
+				failure = index
+				break
+			}
+		}
+		start := failure - 1
+		if start < 0 {
+			start = 0
+		}
+		end := start + 3
+		if end > len(summary.NearbyActions) {
+			end = len(summary.NearbyActions)
+			start = end - 3
+		}
+		summary.NearbyActions = append([]TraceActionSummary(nil), summary.NearbyActions[start:end]...)
+	}
+	compactAction := func(action *TraceActionSummary) {
+		if action == nil {
+			return
+		}
+		action.APIName = truncateTraceValue(action.APIName, 160)
+		action.Locator = truncateTraceValue(action.Locator, 240)
+		action.Error = truncateTraceValue(action.Error, 500)
+	}
+	compactAction(summary.FailingAction)
+	for index := range summary.NearbyActions {
+		compactAction(&summary.NearbyActions[index])
+	}
+	if len(summary.Snapshots) > 1 {
+		summary.Snapshots = summary.Snapshots[:1]
+	}
+	if len(summary.Snapshots) == 1 {
+		summary.Snapshots[0].Excerpt = truncateTraceValue(summary.Snapshots[0].Excerpt, 600)
+	}
+	return summary
 }
 
 func failureContextExcerpt(files []string) string {
