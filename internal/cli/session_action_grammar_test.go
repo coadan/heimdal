@@ -94,3 +94,39 @@ func TestParseGeneratedLocatorHandlesRawAndCodeOutput(t *testing.T) {
 		}
 	}
 }
+
+func TestStableActionGrammarUsesElementRelativePointerCoordinates(t *testing.T) {
+	root := t.TempDir()
+	runDir := filepath.Join(root, "session")
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	snapshot := filepath.Join(runDir, "latest.snapshot.yml")
+	if err := os.WriteFile(snapshot, []byte("- main [ref=e1]:\n  - button \"Canvas surface\" [ref=e2]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	state := SessionState{Name: "qa", SessionDir: runDir, LastSnapshot: snapshot}
+	project := Project{Root: root, AgentRunner: []string{filepath.Join(root, "missing-playwright-cli")}, Config: defaultConfig("")}
+
+	clickArgs := []string{"click", "--within", "e2", "--at", "62%,35%"}
+	runtime, locator, correction, err := planStableSessionAction(context.Background(), project, &state, "", "click", clickArgs)
+	if err != nil || correction != "" || !strings.Contains(locator, "Canvas surface") || !strings.Contains(strings.Join(runtime, " "), "box.width * 0.62") {
+		t.Fatalf("relative click plan = %v, %q, %q, %v", runtime, locator, correction, err)
+	}
+	dragArgs := []string{"pointer", "drag", "--within", "e2", "--from", "10%,20%", "--to", "90%,80%"}
+	runtime, locator, correction, err = planStableSessionAction(context.Background(), project, &state, "", "pointer", dragArgs)
+	if err != nil || correction != "" || !strings.Contains(strings.Join(runtime, " "), "page.mouse.down") || !strings.Contains(strings.Join(runtime, " "), "box.width * 0.9") {
+		t.Fatalf("relative drag plan = %v, %q, %q, %v", runtime, locator, correction, err)
+	}
+
+	lines := sessionActionTestLines(SessionActionRecord{Args: dragArgs, Locator: locator})
+	generated := strings.Join(lines, "\n")
+	if !strings.Contains(generated, "boundingBox") || !strings.Contains(generated, "page.mouse.up") {
+		t.Fatalf("relative drag test lines:\n%s", generated)
+	}
+	for _, invalid := range []string{"62,35", "-1%,20%", "101%,20%"} {
+		if _, _, err := parseRelativePoint(invalid); err == nil {
+			t.Fatalf("relative point accepted: %q", invalid)
+		}
+	}
+}

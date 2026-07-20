@@ -208,6 +208,19 @@ counts, horizontal overflow, clipped-content samples, and controls below 44 px.
 Targeted measurement adds the element rectangle and key computed styles. It is
 read-only and runs through Playwright's evaluation command.
 
+For canvas or spatial controls, keep coordinates relative to a measured
+element instead of calculating viewport pixels:
+
+```bash
+heimdal session click --within e42 --at 62%,35%
+heimdal session pointer drag --within e42 --from 20%,50% --to 80%,50%
+```
+
+Heimdal resolves the retained semantic ref once, then Playwright reads its
+bounding box and performs the pointer action. Saved tests retain the same
+bounding-box calculation, so the interaction survives viewport and layout
+changes better than an absolute `mouse click X Y` sequence.
+
 Sessions are headless by default, which suits unattended agents. Add
 `--headed` to `session start` when you want a visible, inspectable browser:
 

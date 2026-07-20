@@ -249,6 +249,8 @@ Stable action forms:
   type TEXT | type TARGET TEXT
   fill TARGET TEXT [--submit]
   click TARGET [left|right|middle|--force]
+  click --within TARGET --at X%,Y%
+  pointer drag --within TARGET --from X%,Y% --to X%,Y%
   mouse click X Y
 
 Expect options:
@@ -275,6 +277,8 @@ Examples:
   heimdal session observe
   heimdal session click e12
   heimdal session fill e5 "hello"
+  heimdal session click --within e42 --at 62%,35%
+  heimdal session pointer drag --within e42 --from 20%,50% --to 80%,50%
   heimdal session wait --role button --name "Continue" --state enabled --timeout 30s
   heimdal session wait --change --settle 300ms
   heimdal session expect --role button --name "Continue" --state visible
@@ -571,7 +575,7 @@ func failedSessionGrammarResponse(state SessionState, logicalArgs []string, err 
 }
 
 func executeSessionActionPlan(ctx context.Context, project Project, state *SessionState, statePath, action string, options SessionOptions, logicalArgs, runtimeArgs []string, locator string) SessionResponse {
-	captureLocator := locator == "" && isLocatorAction(action, logicalArgs)
+	captureLocator := locator == "" && sessionActionTarget(action, logicalArgs) != ""
 	result, commandErr := runSessionCommandModeArgs(ctx, project, state, statePath, logicalArgs, runtimeArgs, locator, !options.Verbose && !captureLocator)
 	output := result.Stdout
 	stderr := result.Stderr
@@ -597,10 +601,7 @@ func executeSessionActionPlan(ctx context.Context, project Project, state *Sessi
 			}
 		}
 		if commandErr == nil {
-			target := ""
-			if isLocatorAction(action, logicalArgs) {
-				target = logicalArgs[1]
-			}
+			target := sessionActionTarget(action, logicalArgs)
 			allowDelta := !options.Boxes
 			view, commandErr = storeSessionSnapshot(state, statePath, snapshotSequence, snapshot, allowDelta, options.Full, target, snapshotRefreshesReferences(action))
 		}
@@ -1720,6 +1721,9 @@ func sessionActionTestLines(action SessionActionRecord) []string {
 	case "go-forward":
 		return []string{"await page.goForward();"}
 	case "click":
+		if len(action.Args) == 5 && action.Args[1] == "--within" && action.Args[3] == "--at" {
+			return relativePointerTestLines(locator, action.Args[4], "")
+		}
 		if len(action.Args) > 2 && action.Args[2] == "--force" && locator != "" {
 			return []string{"await " + locator + ".click({ force: true });"}
 		}
@@ -1757,6 +1761,11 @@ func sessionActionTestLines(action SessionActionRecord) []string {
 		return []string{fmt.Sprintf("await page.setViewportSize({ width: %s, height: %s });", action.Args[1], action.Args[2])}
 	case "expect":
 		return expectationTestLines(action)
+	case "pointer":
+		if len(action.Args) == 8 && action.Args[1] == "drag" && action.Args[2] == "--within" && action.Args[4] == "--from" && action.Args[6] == "--to" {
+			return relativePointerTestLines(locator, action.Args[5], action.Args[7])
+		}
+		return []string{"// TODO: replace unsupported recorded relative pointer action"}
 	default:
 		return []string{"// Heimdal action: " + strings.Join(action.Args, " ")}
 	}
@@ -1764,7 +1773,7 @@ func sessionActionTestLines(action SessionActionRecord) []string {
 
 func shouldObserveAfterSessionAction(action string) bool {
 	switch action {
-	case "click", "dblclick", "drag", "fill", "select", "check", "uncheck", "hover", "press", "type", "tap", "focus", "goto", "reload", "go-back", "go-forward", "resize", "set-input-files", "wait", "mouse":
+	case "click", "dblclick", "drag", "fill", "select", "check", "uncheck", "hover", "press", "type", "tap", "focus", "goto", "reload", "go-back", "go-forward", "resize", "set-input-files", "wait", "mouse", "pointer":
 		return true
 	default:
 		return false
@@ -1809,15 +1818,28 @@ func quoteTypeScript(value string) string {
 }
 
 func isLocatorAction(action string, args []string) bool {
+	return sessionActionTarget(action, args) != ""
+}
+
+func sessionActionTarget(action string, args []string) string {
 	if len(args) < 2 {
-		return false
+		return ""
+	}
+	if action == "click" && len(args) == 5 && args[1] == "--within" {
+		return args[2]
+	}
+	if action == "pointer" && len(args) == 8 && args[1] == "drag" && args[2] == "--within" {
+		return args[3]
 	}
 	switch action {
 	case "click", "dblclick", "fill", "select", "check", "uncheck", "hover", "highlight", "screenshot":
-		return strings.HasPrefix(args[1], "e")
+		if strings.HasPrefix(args[1], "e") {
+			return args[1]
+		}
 	default:
-		return false
+		return ""
 	}
+	return ""
 }
 
 func absoluteFromRoot(root, value string) string {

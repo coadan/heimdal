@@ -84,6 +84,17 @@ targets. Use `session measure TARGET --json` for the target rectangle and key
 computed styles; then request a screenshot only for visual qualities the
 measurement cannot represent.
 
+For canvas or spatial controls, measure once and use element-relative pointer
+coordinates instead of viewport arithmetic or raw mouse sequences:
+
+```bash
+heimdal session click --within e42 --at 62%,35%
+heimdal session pointer drag --within e42 --from 20%,50% --to 80%,50%
+```
+
+These actions remain Playwright bounding-box operations and graduate into
+viewport-resilient test code.
+
 For asynchronous UI, issue one semantic wait instead of repeatedly observing
 or sleeping. A role is the page's accessibility role (`button`, `link`,
 `textbox`, or similar). Wait by role and accessible name, visible text, or any
