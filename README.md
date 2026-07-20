@@ -449,40 +449,36 @@ Run `heimdal help` for the complete command summary and
 
 ## Agent benchmark
 
-On 2026-07-20, two fresh coding agents started from the same React commit with
-dependencies preinstalled and the same model and reasoning settings. Each
-implemented, tested, built, and browser-verified a persistent theme toggle. One
-used the official `playwright-cli` directly; the other used Heimdal. Both passed
-the task with independent diffs, including a real click and reload in one named
-browser session.
+On 2026-07-20, fresh agents started from the same small React workspace,
+with dependencies preinstalled and the same model and reasoning settings. One
+lane used the official `playwright-cli` directly and the other used Heimdal.
+Tests, builds, diffs, and final browser behavior were checked independently.
 
-| Measure | Playwright CLI | Heimdal |
-| --- | ---: | ---: |
-| Core browser invocations | 10 | 7 |
-| Core browser output | 5.3 KB | 4.2 KB |
-| All shell commands | 23 | 21 |
-| All command output | 62.1 KB | 52.4 KB |
-| Wall time | 345.2 s | 302.2 s |
-| Model input tokens | 980,403 | 722,528 |
-| Model output tokens | 11,461 | 11,719 |
+| Task and tool | Browser rounds | Runtime calls | Wall time | Input tokens | Output tokens | Result |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| Theme feature, Playwright CLI | 11 | 11 | 289.2 s | 889,943 | 11,904 | Pass |
+| Theme feature, Heimdal | 5 | 10 | 301.9 s | 725,752 | 9,977 | Pass |
+| Responsive design, Playwright CLI | 7 | 27 | 287.4 s | 669,982 | 9,997 | Pass |
+| Responsive design, Heimdal | 7 | 10 | 181.0 s | 438,172 | 5,775 | Pass |
 
-Heimdal used 30% fewer core browser invocations and 19% less core browser
-output by returning semantic state with startup and state-changing actions. The
-full run used 26% fewer input tokens, emitted 16% less command output, and
-finished 12% sooner; model output tokens were 2% higher. Core browser figures
-exclude tool help and optional screenshot or diagnosis work, while the
-whole-task command, output, time, and token totals include those detours. This
-is one controlled pair rather than a general performance claim: agent choices
-vary and token totals include cached context.
+A browser round is one agent shell turn containing browser work; batched calls
+within it are counted separately. On the coding task, Heimdal used 55% fewer
+browser rounds and 18% fewer input tokens, but finished 4% slower. On the design
+task, both agents needed one CSS iteration and seven browser rounds, so this pair
+does not prove fewer design iterations. Heimdal did use 63% fewer runtime calls,
+35% fewer input tokens, and 42% fewer output tokens, finishing 37% sooner. The
+direct lane included one unsupported command that printed upstream help.
 
-The current implementation captures Playwright's generated locator from native
-actions. For targeted actions that require `run-code`, it reuses a unique
-role-and-name locator from the retained Playwright snapshot and falls back to
-Playwright's locator generator when the snapshot is ambiguous. This avoids a
-browser call without guessing. A deterministic local microbenchmark on the same
-date measured cached session discovery at about 32 µs versus 12 ms for full
-project rediscovery. These timings cover Heimdal overhead only; browser startup
-and page behavior remain application-dependent.
+These are single agent pairs, not a general speed claim. Token totals include
+cached context, agent choices vary, and the direct design lane was rerun after
+the original benchmark wrapper missed its final usage record. The important
+result is narrower: Heimdal's combined semantic and layout packets can reduce
+tool chatter without changing Playwright as the runtime.
+
+A deterministic local microbenchmark on the same date measured cached session
+discovery at about 32 µs versus 12 ms for full project rediscovery. These
+timings cover Heimdal overhead only; browser startup and page behavior remain
+application-dependent.
 
 ## Development
 
