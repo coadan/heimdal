@@ -451,44 +451,50 @@ Run `heimdal help` for the complete command summary and
 
 ## Agent benchmark
 
-On 2026-07-20, fresh agents started from the same small React workspace,
-with dependencies preinstalled and the same model and reasoning settings. One
-lane used the official `playwright-cli` directly and the other used Heimdal.
-Tests, builds, diffs, and final browser behavior were checked independently.
+On 2026-07-20, paired agents completed the same tasks from the same small React
+workspace. They used identical model settings and preinstalled dependencies.
+All four results passed independent tests, builds, diff review, and browser
+verification.
 
-| Task and tool | Browser rounds | Browser commands | Wall time | Input tokens | Output tokens | Result |
-| --- | ---: | ---: | ---: | ---: | ---: | --- |
-| Theme feature, Playwright CLI | 9 | 11 | 315.5 s | 702,459 | 11,630 | Pass |
-| Theme feature, Heimdal | 5 | 12 | 375.4 s | 760,176 | 11,070 | Pass |
-| Responsive design, Playwright CLI | 7 | 27 | 270.6 s | 688,329 | 10,230 | Pass |
-| Responsive design, Heimdal | 3 | 8 | 203.6 s | 529,646 | 6,803 | Pass |
+### What the agents showed
+
+- **Coding:** Heimdal reduced browser rounds from 9 to 5, but took 19% longer
+  and used 8% more input tokens. It was not cheaper across every measure.
+- **Responsive design:** Heimdal reached the result in one CSS iteration instead
+  of two. It used 3 rather than 7 browser rounds, 23% fewer input tokens, and
+  25% less wall time.
+
+These are single agent pairs, not a general performance claim. Token totals
+include cached context, and agent choices vary. The narrower finding is that
+combined semantic and layout evidence can reduce browser back-and-forth when a
+task depends on visual decisions. It does not guarantee lower whole-task cost.
+
+<details>
+<summary>Raw agent results and definitions</summary>
+
+| Task | Tool | Rounds | Commands | Time | Input tokens | Output tokens |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| Theme feature | Playwright CLI | 9 | 11 | 315.5 s | 702,459 | 11,630 |
+| Theme feature | Heimdal | 5 | 12 | 375.4 s | 760,176 | 11,070 |
+| Responsive design | Playwright CLI | 7 | 27 | 270.6 s | 688,329 | 10,230 |
+| Responsive design | Heimdal | 3 | 8 | 203.6 s | 529,646 | 6,803 |
 
 A browser round is one agent shell turn containing browser work. Browser
-commands are CLI commands issued by the agent; composite Heimdal commands can
-perform several upstream Playwright operations internally. On the coding task,
-Heimdal used 44% fewer browser rounds and 5% fewer output tokens, but issued one
-more browser command, used 8% more input tokens, and finished 19% slower. On the
-design task, Heimdal reached the verified result in one CSS iteration instead of
-two, with 57% fewer browser rounds, 70% fewer browser commands, 23% fewer input
-tokens, 34% fewer output tokens, and 25% lower wall time. The direct design lane
-also issued one unsupported command that printed upstream help.
+commands are CLI commands issued by the agent; a composite Heimdal command can
+perform several upstream Playwright operations. The direct design lane also
+issued one unsupported command that printed upstream help.
 
-These are single agent pairs, not a general speed claim. Token totals include
-cached context and agent choices vary. The important result is narrower:
-Heimdal's combined semantic and layout packets can reduce tool chatter and
-design iterations when the decision depends on browser evidence, without
-changing Playwright as the runtime. The coding result shows that this does not
-guarantee lower whole-task cost.
+</details>
 
-The viewport fusion itself is deterministic: across six local repetitions,
-separate resize and measure commands averaged 1.11 seconds while
-`measure --viewport` averaged 0.71 seconds, a 36% reduction for the same layout
-evidence.
+### Focused measurements
 
-A deterministic local microbenchmark on the same date measured cached session
-discovery at about 32 µs versus 12 ms for full project rediscovery. These
-timings cover Heimdal overhead only; browser startup and page behavior remain
-application-dependent.
+- `measure --viewport` averaged 0.71 seconds, compared with 1.11 seconds for
+  separate resize and measure commands: 36% less time across six local runs.
+- Cached session discovery took about 32 µs, compared with 12 ms for full
+  project rediscovery in a deterministic local microbenchmark.
+
+Focused measurements cover Heimdal overhead only. Browser startup and page
+behavior remain application-dependent.
 
 ## Development
 
