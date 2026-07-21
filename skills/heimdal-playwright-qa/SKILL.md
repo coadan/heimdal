@@ -168,24 +168,26 @@ safe consecutive interactions when the retained timeline supports it.
 Checkpoints label recoverable session state and appear in reports; they do not
 make arbitrary repository test fixtures resumable.
 
-Put known consecutive actions in one bounded batch to reduce agent round trips:
+Once a verification flow is known, put its actions, semantic assertions, and
+bounded named JSON evidence in one batch:
 
 ```json
-{"version":1,"steps":[{"command":"fill","args":["e5","hello"]},{"command":"click","args":["e8"]}]}
+{"version":1,"steps":[{"command":"click","args":["e8"]},{"command":"expect","args":["--role","button","--name","Saved"]},{"command":"evidence","args":["save.state","() => ({ saved: true })"]}]}
 ```
 
 ```bash
 heimdal session batch --file browser-steps.json --json
 ```
 
-The batch stops at the first failed step and returns the final snapshot or
-delta. Safe batches with unambiguous retained refs run as one Playwright code
-block plus one final ref-refresh snapshot while preserving per-step deltas,
-failure attribution, and test-generation locators. Check `execution` and
-`playwright_invocations` in JSON; unsupported or ambiguous batches fall back to
-the stepwise path. Keep `wait --change` outside an atomic batch so its
-retained-snapshot race check remains active. Action JSON is compact by default;
-use `--json=full` only when repeated session metadata is needed.
+The batch stops at the first failed step and returns final fresh refs. Safe
+batches with unambiguous retained refs run as one Playwright code block plus one
+final ref-refresh snapshot while preserving per-step deltas, assertions,
+failure attribution, and test-generation locators. Named evidence appears in
+the response's `evidence` object and must return JSON. Check `execution` and
+`playwright_invocations`; unsupported or ambiguous batches fall back to the
+stepwise path. Keep `wait --change` outside an atomic batch so its retained-
+snapshot race check remains active. Action JSON is compact by default; use
+`--json=full` only when repeated session metadata is needed.
 
 For a bounded multi-user flow, use one group instead of independently managing
 several app fixtures:
@@ -208,14 +210,15 @@ For an interactive failure, use one diagnostic packet:
 
 ```bash
 heimdal session diagnose --json
-heimdal session diagnose --stop --json
+heimdal session diagnose --screenshot --stop --json
 ```
 
 The compact packet groups repeated console and request failures by signature
-and returns a semantic delta when the page has not changed. Use `--stop` only
-for the final inspection of a non-group session; it captures evidence before
-closing the browser and owned app, saving a separate lifecycle round trip.
-Stop multi-actor sessions with `session group stop`.
+and returns a semantic delta when the page has not changed. Add `--screenshot`
+only when visual evidence matters. Use `--stop` only for the final inspection
+of a non-group session; it captures evidence before closing the browser and
+owned app, saving separate screenshot and lifecycle commands. Stop multi-actor
+sessions with `session group stop`.
 
 For a deterministic run, inspect the live or final report before opening raw
 artifacts:

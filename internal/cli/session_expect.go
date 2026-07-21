@@ -32,13 +32,18 @@ func runSessionExpect(ctx context.Context, args []string, out, errOut io.Writer)
 	if state.StoppedAt != nil {
 		return reportError(options.JSON, fmt.Errorf("session %q is stopped", state.Name), out, errOut)
 	}
+	response := executeSessionExpectAction(ctx, project, &state, statePath, options)
+	return printSessionResponse(out, errOut, response, options.JSON)
+}
+
+func executeSessionExpectAction(ctx context.Context, project Project, state *SessionState, statePath string, options sessionExpectOptions) SessionResponse {
 	logicalArgs := expectLogicalArgs(options)
-	locator, err := expectLocator(ctx, project, &state, statePath, options)
+	locator, err := expectLocator(ctx, project, state, statePath, options)
 	if err != nil {
-		return printSessionResponse(out, errOut, failedSessionGrammarResponse(state, logicalArgs, err, sessionActionCorrection("expect"), options.FullJSON), options.JSON)
+		return failedSessionGrammarResponse(*state, logicalArgs, err, sessionActionCorrection("expect"), options.FullJSON)
 	}
-	result, commandErr := runSessionCommandModeArgs(ctx, project, &state, statePath, logicalArgs, []string{"run-code", expectPlaywrightCode(options, locator)}, locator, true)
-	response := sessionResponse(state, result, commandErr)
+	result, commandErr := runSessionCommandModeArgs(ctx, project, state, statePath, logicalArgs, []string{"run-code", expectPlaywrightCode(options, locator)}, locator, true)
+	response := sessionResponse(*state, result, commandErr)
 	response.CompactJSON = !options.FullJSON
 	response.Command = logicalArgs
 	if commandErr == nil {
@@ -50,7 +55,7 @@ func runSessionExpect(ctx context.Context, args []string, out, errOut io.Writer)
 			response.Error = truncateDisplay(detail, 800)
 		}
 	}
-	return printSessionResponse(out, errOut, response, options.JSON)
+	return response
 }
 
 func parseSessionExpectOptions(args []string) (sessionExpectOptions, error) {

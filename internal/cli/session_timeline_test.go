@@ -53,6 +53,12 @@ func TestSessionViewAcceptsPositionalName(t *testing.T) {
 	}
 }
 
+func TestSessionTimelineClassifiesNamedEvidence(t *testing.T) {
+	if category := sessionActionCategory([]string{"evidence", "save.state", "<expression>"}); category != "evidence" {
+		t.Fatalf("named evidence category = %q", category)
+	}
+}
+
 func TestSessionTimelineDefaultsStayBoundedAndSupportPagination(t *testing.T) {
 	started := time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
 	entries := make([]SessionTimelineEntry, 0, 706)

@@ -70,6 +70,7 @@ func TestSessionDiagnoseCompactsUnchangedStateAndStopsOnce(t *testing.T) {
 	script := `#!/bin/sh
 printf '%s\n' "$*" >> '` + calls + `'
 case "$*" in
+  *" screenshot") printf '%s\n' 'Screenshot saved to /tmp/page.png' ;;
   *" console error") printf '%s\n' 'Total messages: 2 (Errors: 0, Warnings: 2)' '[WARNING] Slow response @ http://127.0.0.1:4173/app.js:1' '[WARNING] Slow response @ http://127.0.0.1:4173/app.js:1' ;;
   *" requests") printf '%s\n' '1. [GET] http://127.0.0.1:4173/api/ready => [200] OK' '2. [GET] http://127.0.0.1:4173/api/ready => [200] OK' ;;
   *" snapshot") printf '%s\n' '- heading "Ready" [ref=e2]' ;;
@@ -94,7 +95,7 @@ esac
 	}
 
 	var out, errOut strings.Builder
-	if code := runSessionDiagnose(context.Background(), []string{"--dir", root, "--name", "qa", "--stop", "--json"}, &out, &errOut); code != 0 {
+	if code := runSessionDiagnose(context.Background(), []string{"--dir", root, "--name", "qa", "--stop", "--screenshot", "--json"}, &out, &errOut); code != 0 {
 		t.Fatalf("diagnose exit = %d\nstdout=%s\nstderr=%s", code, out.String(), errOut.String())
 	}
 	var response SessionResponse
@@ -104,7 +105,7 @@ esac
 	if !response.Closed || response.Status != "passed" || response.SnapshotMode != "delta" || response.Snapshot != "No semantic changes." {
 		t.Fatalf("diagnose response = %#v", response)
 	}
-	for _, expected := range []string{"2 entries, 1 signatures", "2× [WARNING] Slow response @ /app.js", "session: closed"} {
+	for _, expected := range []string{"Screenshot saved to /tmp/page.png", "2 entries, 1 signatures", "2× [WARNING] Slow response @ /app.js", "session: closed"} {
 		if !strings.Contains(response.Output, expected) {
 			t.Fatalf("diagnose output omitted %q:\n%s", expected, response.Output)
 		}
@@ -120,10 +121,19 @@ esac
 	if got := strings.Count(string(contents), " close\n"); got != 1 {
 		t.Fatalf("close calls = %d:\n%s", got, contents)
 	}
+	if got := strings.Count(string(contents), " screenshot\n"); got != 1 {
+		t.Fatalf("screenshot calls = %d:\n%s", got, contents)
+	}
 }
 
 func TestSessionDiagnoseOptionsRejectDuplicateStop(t *testing.T) {
 	if _, err := parseSessionDiagnoseOptions([]string{"--stop", "--stop"}); err == nil {
 		t.Fatal("duplicate --stop was accepted")
+	}
+}
+
+func TestSessionDiagnoseOptionsRejectDuplicateScreenshot(t *testing.T) {
+	if _, err := parseSessionDiagnoseOptions([]string{"--screenshot", "--screenshot"}); err == nil {
+		t.Fatal("duplicate --screenshot was accepted")
 	}
 }

@@ -29,31 +29,34 @@ type sessionBatchStep struct {
 }
 
 type sessionBatchStepResult struct {
-	Index           int      `json:"index"`
-	Command         []string `json:"command"`
-	Status          string   `json:"status"`
-	Action          int      `json:"action,omitempty"`
-	Output          string   `json:"output,omitempty"`
-	Snapshot        string   `json:"snapshot,omitempty"`
-	SnapshotMode    string   `json:"snapshot_mode,omitempty"`
-	SnapshotOmitted int      `json:"snapshot_omitted,omitempty"`
-	Error           string   `json:"error,omitempty"`
-	Issues          []string `json:"issues,omitempty"`
+	Index           int             `json:"index"`
+	Command         []string        `json:"command"`
+	Status          string          `json:"status"`
+	Action          int             `json:"action,omitempty"`
+	Output          string          `json:"output,omitempty"`
+	EvidenceName    string          `json:"evidence_name,omitempty"`
+	Evidence        json.RawMessage `json:"evidence,omitempty"`
+	Snapshot        string          `json:"snapshot,omitempty"`
+	SnapshotMode    string          `json:"snapshot_mode,omitempty"`
+	SnapshotOmitted int             `json:"snapshot_omitted,omitempty"`
+	Error           string          `json:"error,omitempty"`
+	Issues          []string        `json:"issues,omitempty"`
 }
 
 type sessionBatchResponse struct {
-	SchemaVersion  int                      `json:"schema_version"`
-	Status         string                   `json:"status"`
-	Session        string                   `json:"session"`
-	Execution      string                   `json:"execution"`
-	Invocations    int                      `json:"playwright_invocations"`
-	Planned        int                      `json:"planned_steps"`
-	Steps          []sessionBatchStepResult `json:"steps"`
-	Snapshot       string                   `json:"snapshot,omitempty"`
-	SnapshotMode   string                   `json:"snapshot_mode,omitempty"`
-	Error          string                   `json:"error,omitempty"`
-	Artifact       string                   `json:"artifact,omitempty"`
-	SessionDetails *SessionState            `json:"session_details,omitempty"`
+	SchemaVersion  int                        `json:"schema_version"`
+	Status         string                     `json:"status"`
+	Session        string                     `json:"session"`
+	Execution      string                     `json:"execution"`
+	Invocations    int                        `json:"playwright_invocations"`
+	Planned        int                        `json:"planned_steps"`
+	Steps          []sessionBatchStepResult   `json:"steps"`
+	Evidence       map[string]json.RawMessage `json:"evidence,omitempty"`
+	Snapshot       string                     `json:"snapshot,omitempty"`
+	SnapshotMode   string                     `json:"snapshot_mode,omitempty"`
+	Error          string                     `json:"error,omitempty"`
+	Artifact       string                     `json:"artifact,omitempty"`
+	SessionDetails *SessionState              `json:"session_details,omitempty"`
 }
 
 func runSessionBatch(ctx context.Context, args []string, out, errOut io.Writer) int {
@@ -89,6 +92,22 @@ func runSessionBatch(ctx context.Context, args []string, out, errOut io.Writer) 
 	response.Execution = "sequential"
 	initialActionCount := state.ActionCount
 	for index, step := range document.Steps {
+		if step.Command == "evidence" {
+			stepResult := executeSessionBatchEvidence(ctx, project, &state, statePath, index+1, step)
+			response.Steps = append(response.Steps, stepResult)
+			if len(stepResult.Evidence) > 0 {
+				if response.Evidence == nil {
+					response.Evidence = make(map[string]json.RawMessage)
+				}
+				response.Evidence[stepResult.EvidenceName] = stepResult.Evidence
+			}
+			if stepResult.Status == "failed" {
+				response.Status = "failed"
+				response.Error = stepResult.Error
+				break
+			}
+			continue
+		}
 		stepOptions := options.SessionOptions
 		stepOptions.Forwarded = append([]string(nil), step.Args...)
 		stepOptions.Full = stepOptions.Full || step.Full
@@ -194,9 +213,16 @@ func readSessionBatch(path string, stdin io.Reader) (sessionBatchDocument, []byt
 	if len(document.Steps) == 0 || len(document.Steps) > maxSessionBatchSteps {
 		return sessionBatchDocument{}, nil, fmt.Errorf("session batch must contain 1 to %d steps", maxSessionBatchSteps)
 	}
+	evidenceNames := make(map[string]struct{})
 	for index, step := range document.Steps {
 		if err := validateSessionBatchStep(step); err != nil {
 			return sessionBatchDocument{}, nil, fmt.Errorf("session batch step %d: %w", index+1, err)
+		}
+		if step.Command == "evidence" {
+			if _, exists := evidenceNames[step.Args[0]]; exists {
+				return sessionBatchDocument{}, nil, fmt.Errorf("session batch step %d: duplicate evidence name %q", index+1, step.Args[0])
+			}
+			evidenceNames[step.Args[0]] = struct{}{}
 		}
 	}
 	canonical, err := json.MarshalIndent(document, "", "  ")
@@ -213,8 +239,68 @@ func validateSessionBatchStep(step sessionBatchStep) error {
 	switch step.Command {
 	case "start", "stop", "status", "save", "diagnose", "batch", "timeline", "report", "checkpoint", "measure", "help":
 		return fmt.Errorf("command %q is not valid inside a running-session batch", step.Command)
+	case "evidence":
+		if len(step.Args) != 2 {
+			return errors.New("evidence requires NAME and one Playwright evaluation expression")
+		}
+		if err := validateCoordinationSelector("evidence", step.Args[0]); err != nil {
+			return err
+		}
+		if strings.TrimSpace(step.Args[1]) == "" {
+			return errors.New("evidence expression must not be empty")
+		}
 	}
 	return nil
+}
+
+func executeSessionBatchEvidence(ctx context.Context, project Project, state *SessionState, statePath string, index int, step sessionBatchStep) sessionBatchStepResult {
+	name, expression := step.Args[0], step.Args[1]
+	logicalArgs := []string{"evidence", name, expression}
+	runtimeCode := "async page => await page.evaluate(" + expression + ")"
+	result, commandErr := runSessionCommandModeArgs(ctx, project, state, statePath, logicalArgs, []string{"run-code", runtimeCode}, "", true)
+	stepResult := sessionBatchStepResult{Index: index, Command: compactSessionBatchArgs(logicalArgs), Status: "passed", Action: result.Sequence, EvidenceName: name}
+	if commandErr != nil {
+		stepResult.Status = "failed"
+		stepResult.Error = commandErr.Error()
+		if detail := compactCLIOutput(joinOutputs(result.Stdout, result.Stderr)); detail != "" {
+			stepResult.Error = truncateDisplay(detail, 800)
+		}
+		return stepResult
+	}
+	payload, err := parseSessionBatchEvidence(result.Stdout)
+	if err != nil {
+		stepResult.Status = "failed"
+		stepResult.Error = err.Error()
+		return stepResult
+	}
+	stepResult.Output = "captured named evidence " + name
+	stepResult.Evidence = payload
+	return stepResult
+}
+
+func parseSessionBatchEvidence(output string) (json.RawMessage, error) {
+	clean := strings.TrimSpace(stripANSI(output))
+	if start := strings.Index(clean, "### Result"); start >= 0 {
+		clean = strings.TrimSpace(clean[start+len("### Result"):])
+	}
+	if end := strings.Index(clean, "\n### "); end >= 0 {
+		clean = strings.TrimSpace(clean[:end])
+	}
+	clean = strings.TrimSpace(strings.Trim(clean, "`"))
+	if strings.HasPrefix(clean, "json\n") || strings.HasPrefix(clean, "js\n") {
+		clean = strings.TrimSpace(clean[3:])
+	}
+	var encoded string
+	if json.Unmarshal([]byte(clean), &encoded) == nil && json.Valid([]byte(encoded)) {
+		clean = encoded
+	}
+	if clean == "" || !json.Valid([]byte(clean)) {
+		return nil, errors.New("Playwright evidence expression did not return JSON")
+	}
+	if len(clean) > coordinationMaxMetadataBytes {
+		return nil, fmt.Errorf("Playwright evidence exceeds %d bytes", coordinationMaxMetadataBytes)
+	}
+	return json.RawMessage(append([]byte(nil), clean...)), nil
 }
 
 func printSessionBatchResponse(out, errOut io.Writer, response sessionBatchResponse, asJSON bool) int {

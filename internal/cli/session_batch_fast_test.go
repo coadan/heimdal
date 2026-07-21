@@ -101,6 +101,65 @@ func TestSessionBatchFastPathIdentifiesExactFailingStepAndStillRefreshes(t *test
 	}
 }
 
+func TestSessionBatchFastPathCapturesAssertionsAndNamedEvidence(t *testing.T) {
+	payload := sessionBatchFastPayload{Version: 1, Steps: []sessionBatchFastStepPayload{
+		{Index: 1, Status: "passed"},
+		{Index: 2, Status: "passed", Snapshot: "- main:\n  - button \"Switch to light theme\""},
+		{Index: 3, Status: "passed"},
+		{Index: 4, Status: "passed", Evidence: json.RawMessage(`{"theme":"dark","stored":"dark"}`)},
+		{Index: 5, Status: "passed", Snapshot: "- main:\n  - button \"Switch to light theme\""},
+		{Index: 6, Status: "passed"},
+		{Index: 7, Status: "passed", Evidence: json.RawMessage(`{"theme":"dark","stored":"dark"}`)},
+	}}
+	root, statePath, calls := setupSessionBatchFastFixture(t, payload)
+	response, code, stderr := runSessionBatchFixture(t, root, `{
+  "version": 1,
+  "steps": [
+    {"command":"expect","args":["--role","button","--name","Save","--state","visible"]},
+    {"command":"click","args":["e3"]},
+    {"command":"expect","args":["--role","button","--name","Saved","--state","visible"]},
+    {"command":"evidence","args":["theme.after-click","() => ({ theme: 'dark', stored: 'dark' })"]},
+    {"command":"reload"},
+    {"command":"expect","args":["--role","button","--name","Saved","--state","visible"]},
+    {"command":"evidence","args":["theme.after-reload","() => ({ theme: 'dark', stored: 'dark' })"]}
+  ]
+}`)
+	if code != 0 || response.Status != "passed" || response.Execution != "atomic" || response.Invocations != 2 || len(response.Steps) != 7 {
+		t.Fatalf("assertion batch = %#v (exit %d, stderr %s)", response, code, stderr)
+	}
+	for _, name := range []string{"theme.after-click", "theme.after-reload"} {
+		var got map[string]string
+		if err := json.Unmarshal(response.Evidence[name], &got); err != nil || got["theme"] != "dark" || got["stored"] != "dark" {
+			t.Fatalf("evidence %s = %#v, %v", name, got, err)
+		}
+	}
+	if response.Steps[0].Output != "expectation passed" || response.Steps[3].Output != "captured named evidence theme.after-click" {
+		t.Fatalf("compact step output = %#v", response.Steps)
+	}
+	assertSessionBatchCalls(t, calls, []string{"run-code", "snapshot"})
+
+	state, err := readSessionState(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	actions, err := readSessionActions(state.ActionLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(actions) != 8 || strings.Join(actions[0].Args[:2], " ") != "expect --role" || strings.Join(actions[3].Args[:2], " ") != "evidence theme.after-click" {
+		t.Fatalf("assertion batch transcript = %#v", actions)
+	}
+	generated := sessionTest(state, actions)
+	for _, expected := range []string{"toBeVisible", "await page.reload()"} {
+		if !strings.Contains(generated, expected) {
+			t.Fatalf("generated test omitted %q:\n%s", expected, generated)
+		}
+	}
+	if strings.Contains(generated, "named evidence") || strings.Contains(generated, "TODO") {
+		t.Fatalf("generated test retained exploratory evidence:\n%s", generated)
+	}
+}
+
 func TestSessionBatchUnsupportedStepFallsBackForWholeBatch(t *testing.T) {
 	t.Setenv("HEIMDAL_STATE_DIR", t.TempDir())
 	root := t.TempDir()
@@ -164,16 +223,33 @@ func TestSessionBatchFastTranslationCoversKnownSafeActions(t *testing.T) {
 		{Command: "hover", Args: []string{"e3"}},
 		{Command: "mouse", Args: []string{"click", "12.5", "40"}},
 		{Command: "wait", Args: []string{"--role", "button", "--name", "Save", "--state", "enabled", "--timeout", "2s"}},
+		{Command: "expect", Args: []string{"--role", "button", "--name", "Save", "--state", "visible"}},
+		{Command: "expect", Args: []string{"--text", "Saved", "--state", "visible"}},
+		{Command: "expect", Args: []string{"--url", "https://example.test/next"}},
+		{Command: "expect", Args: []string{"--target", "e2", "--value", "Alice"}},
+		{Command: "evidence", Args: []string{"form.state", "() => ({ saved: true })"}},
 	}
 	for index, step := range steps {
 		planned, ok := translateSessionBatchFastStep(index+1, step, batchFastRetainedSnapshot)
-		if !ok || planned.Code == "" {
+		if !ok || (planned.Code == "" && planned.EvidenceCode == "") {
 			t.Fatalf("safe action was not translated: %#v", step)
 		}
 	}
 	compact := compactSessionBatchArgs([]string{"type", "e2", "private text"})
 	if strings.Join(compact, " ") != "type e2 <text:12 chars>" {
 		t.Fatalf("targeted type redaction = %v", compact)
+	}
+}
+
+func TestSessionBatchRejectsInvalidNamedEvidence(t *testing.T) {
+	for _, document := range []string{
+		`{"version":1,"steps":[{"command":"evidence","args":["bad name","() => 1"]}]}`,
+		`{"version":1,"steps":[{"command":"evidence","args":["state"]}]}`,
+		`{"version":1,"steps":[{"command":"evidence","args":["state","() => 1"]},{"command":"evidence","args":["state","() => 2"]}]}`,
+	} {
+		if _, _, err := readSessionBatch("-", strings.NewReader(document)); err == nil {
+			t.Fatalf("invalid evidence batch was accepted: %s", document)
+		}
 	}
 }
 

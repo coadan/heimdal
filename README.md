@@ -283,15 +283,16 @@ a materially different page returns a full snapshot. Reordering unique content
 or moving it between meaningful regions also counts as a change. Add `--full`
 when the complete semantic tree is needed.
 
-Known consecutive actions can share one agent round trip through a bounded JSON
-batch:
+Once a verification flow is known, actions, semantic assertions, and bounded
+named JSON evidence can share one agent round trip:
 
 ```json
 {
   "version": 1,
   "steps": [
-    { "command": "fill", "args": ["e5", "hello"] },
-    { "command": "click", "args": ["e8"] }
+    { "command": "click", "args": ["e8"] },
+    { "command": "expect", "args": ["--role", "button", "--name", "Saved"] },
+    { "command": "evidence", "args": ["save.state", "() => ({ saved: true })"] }
   ]
 }
 ```
@@ -303,12 +304,19 @@ heimdal session batch --file browser-steps.json --name qa --json
 Batch execution stops at the first failed step. Ordinary action JSON omits
 repeated session metadata; use `--json=full` when that metadata is required.
 When every step has an unambiguous retained semantic locator and a stable
-action shape, Heimdal compiles the batch into one Playwright `run-code`
-invocation, captures a bounded semantic delta after each logical step, and uses
-one final Playwright snapshot to return fresh refs. The response reports
-`execution: "atomic"` and `playwright_invocations: 2`. Arbitrary commands,
-ambiguous refs, expanded/boxed evidence, and change waits use the original
-stepwise path for correctness and report `execution: "sequential"`.
+shape, Heimdal compiles the batch into one Playwright `run-code` invocation and
+uses one final snapshot to return fresh refs. State-changing steps retain
+bounded semantic deltas; passing assertions and named evidence avoid redundant
+snapshots. The response reports `execution: "atomic"`,
+`playwright_invocations: 2`, and an `evidence` object. Arbitrary commands,
+ambiguous refs, expanded/boxed output, and change waits use the stepwise path
+for correctness.
+
+For final visual evidence and cleanup, combine the screenshot with diagnosis:
+
+```bash
+heimdal session diagnose --screenshot --stop --json
+```
 
 When graduating an exploration, ask Heimdal to reject an incomplete draft:
 

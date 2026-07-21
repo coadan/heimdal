@@ -18,13 +18,16 @@ import (
 const sessionBatchFastSnapshotChars = defaultSnapshotBudgetBytes
 
 type sessionBatchFastStep struct {
-	Index       int
-	LogicalArgs []string
-	Code        string
-	Locator     string
-	Target      string
-	Full        bool
-	RefreshRefs bool
+	Index        int
+	LogicalArgs  []string
+	Code         string
+	Locator      string
+	Target       string
+	EvidenceName string
+	EvidenceCode string
+	Observe      bool
+	Full         bool
+	RefreshRefs  bool
 }
 
 type sessionBatchFastPayload struct {
@@ -34,12 +37,13 @@ type sessionBatchFastPayload struct {
 }
 
 type sessionBatchFastStepPayload struct {
-	Index      int    `json:"index"`
-	Status     string `json:"status"`
-	Snapshot   string `json:"snapshot"`
-	Error      string `json:"error,omitempty"`
-	StartedAt  string `json:"started_at,omitempty"`
-	FinishedAt string `json:"finished_at,omitempty"`
+	Index      int             `json:"index"`
+	Status     string          `json:"status"`
+	Snapshot   string          `json:"snapshot"`
+	Evidence   json.RawMessage `json:"evidence,omitempty"`
+	Error      string          `json:"error,omitempty"`
+	StartedAt  string          `json:"started_at,omitempty"`
+	FinishedAt string          `json:"finished_at,omitempty"`
 }
 
 func planSessionBatchFast(document sessionBatchDocument, state SessionState, options sessionBatchOptions) ([]sessionBatchFastStep, bool) {
@@ -71,7 +75,7 @@ func planSessionBatchFast(document sessionBatchDocument, state SessionState, opt
 
 func translateSessionBatchFastStep(index int, step sessionBatchStep, retainedSnapshot string) (sessionBatchFastStep, bool) {
 	logicalArgs := append([]string{step.Command}, step.Args...)
-	planned := sessionBatchFastStep{Index: index, LogicalArgs: logicalArgs, Full: step.Full, RefreshRefs: snapshotRefreshesReferences(step.Command)}
+	planned := sessionBatchFastStep{Index: index, LogicalArgs: logicalArgs, Observe: shouldObserveAfterSessionAction(step.Command), Full: step.Full, RefreshRefs: snapshotRefreshesReferences(step.Command)}
 	semanticLocator := func(target string) (string, bool) {
 		if target == "" || !strings.HasPrefix(target, "e") || retainedSnapshot == "" {
 			return "", false
@@ -184,6 +188,38 @@ func translateSessionBatchFastStep(index int, step sessionBatchStep, retainedSna
 		}
 		planned.LogicalArgs = waitLogicalArgs(waitOptions)
 		planned.Code = "await (" + waitPlaywrightCode(waitOptions) + ")(page);"
+	case "expect":
+		expectOptions, err := parseSessionExpectOptions(step.Args)
+		if err != nil {
+			return sessionBatchFastStep{}, false
+		}
+		locator := ""
+		switch {
+		case expectOptions.Role != "":
+			locator = "page.getByRole(" + jsonString(expectOptions.Role)
+			if expectOptions.Name != "" {
+				locator += ", { name: " + jsonString(expectOptions.Name) + ", exact: true }"
+			}
+			locator += ").first()"
+		case expectOptions.Text != "":
+			locator = "page.getByText(" + jsonString(expectOptions.Text) + ", { exact: true }).first()"
+		case expectOptions.Target != "":
+			var ok bool
+			locator, ok = semanticLocator(expectOptions.Target)
+			if !ok {
+				return sessionBatchFastStep{}, false
+			}
+			planned.Target = expectOptions.Target
+		}
+		planned.LogicalArgs = expectLogicalArgs(expectOptions)
+		planned.Locator = locator
+		planned.Code = "await (" + expectPlaywrightCode(expectOptions, locator) + ")(page);"
+	case "evidence":
+		if len(step.Args) != 2 {
+			return sessionBatchFastStep{}, false
+		}
+		planned.EvidenceName = step.Args[0]
+		planned.EvidenceCode = step.Args[1]
 	default:
 		return sessionBatchFastStep{}, false
 	}
@@ -228,12 +264,23 @@ func sessionBatchFastCode(plan []sessionBatchFastStep) string {
 `)
 	code.WriteString("  const baseline = await captureSnapshot();\n")
 	for _, step := range plan {
+		snapshotCode := "const snapshot = '';"
+		if step.Observe {
+			snapshotCode = "const snapshot = await captureSnapshot();"
+		}
+		evidenceCode := ""
+		evidenceField := ""
+		if step.EvidenceName != "" {
+			evidenceCode = "const evidence = await page.evaluate(" + step.EvidenceCode + ");"
+			evidenceField = ", evidence"
+		}
 		fmt.Fprintf(&code, `  {
     const started_at = new Date().toISOString();
     try {
       %s
-      const snapshot = await captureSnapshot();
-      results.push({ index: %d, status: 'passed', snapshot, started_at, finished_at: new Date().toISOString() });
+      %s
+      %s
+      results.push({ index: %d, status: 'passed', snapshot%s, started_at, finished_at: new Date().toISOString() });
     } catch (error) {
       let snapshot = '';
       let detail = errorText(error);
@@ -242,7 +289,7 @@ func sessionBatchFastCode(plan []sessionBatchFastStep) string {
       return { version: 1, baseline, steps: results };
     }
   }
-`, step.Code, step.Index, step.Index)
+`, step.Code, evidenceCode, snapshotCode, step.Index, evidenceField, step.Index)
 	}
 	code.WriteString("  return { version: 1, baseline, steps: results };\n}")
 	return code.String()
@@ -289,8 +336,18 @@ func executeSessionBatchFast(ctx context.Context, project Project, state *Sessio
 		previousSnapshot := payload.Baseline
 		for payloadIndex, result := range payload.Steps {
 			planned := plan[payloadIndex]
+			if planned.EvidenceName != "" && result.Status == "passed" && len(result.Evidence) == 0 {
+				result.Status = "failed"
+				result.Error = "Playwright evidence expression returned undefined; return a JSON value"
+			}
 			stepResult, err := recordSessionBatchFastStep(state, statePath, planned, result, previousSnapshot, started, finished)
 			response.Steps = append(response.Steps, stepResult)
+			if len(stepResult.Evidence) > 0 {
+				if response.Evidence == nil {
+					response.Evidence = make(map[string]json.RawMessage)
+				}
+				response.Evidence[stepResult.EvidenceName] = stepResult.Evidence
+			}
 			if err != nil {
 				response.Status = "failed"
 				response.Error = err.Error()
@@ -301,7 +358,9 @@ func executeSessionBatchFast(ctx context.Context, project Project, state *Sessio
 				response.Error = result.Error
 				break
 			}
-			previousSnapshot = result.Snapshot
+			if result.Snapshot != "" {
+				previousSnapshot = result.Snapshot
+			}
 		}
 	}
 
@@ -370,6 +429,9 @@ func parseSessionBatchFastOutput(output string, planned int) (sessionBatchFastPa
 		if len(step.Snapshot) > sessionBatchFastSnapshotChars+256 {
 			return sessionBatchFastPayload{}, fmt.Errorf("parse Playwright batch result: step %d snapshot exceeds the evidence bound", step.Index)
 		}
+		if len(step.Evidence) > coordinationMaxMetadataBytes {
+			return sessionBatchFastPayload{}, fmt.Errorf("parse Playwright batch result: step %d evidence exceeds %d bytes", step.Index, coordinationMaxMetadataBytes)
+		}
 	}
 	if !failed && len(payload.Steps) != planned {
 		return sessionBatchFastPayload{}, fmt.Errorf("parse Playwright batch result: stopped after %d of %d steps without a failure", len(payload.Steps), planned)
@@ -392,6 +454,9 @@ func recordSessionBatchFastStep(state *SessionState, statePath string, planned s
 	stdoutPath := filepath.Join(state.SessionDir, fmt.Sprintf("action-%04d.stdout.log", sequence))
 	stderrPath := filepath.Join(state.SessionDir, fmt.Sprintf("action-%04d.stderr.log", sequence))
 	stdout := "batched Playwright action " + payload.Status + "\n"
+	if planned.EvidenceName != "" && len(payload.Evidence) > 0 {
+		stdout += "HEIMDAL_EVIDENCE " + planned.EvidenceName + " " + string(payload.Evidence) + "\n"
+	}
 	stderr := ""
 	if payload.Error != "" {
 		stderr = payload.Error + "\n"
@@ -427,6 +492,7 @@ func recordSessionBatchFastStep(state *SessionState, statePath string, planned s
 	stepResult := sessionBatchStepResult{
 		Index: planned.Index, Command: compactSessionBatchArgs(planned.LogicalArgs), Status: payload.Status,
 		Action: sequence, Output: compactSessionBatchAction(planned.LogicalArgs, planned.Locator),
+		EvidenceName: planned.EvidenceName, Evidence: payload.Evidence,
 		Snapshot: view.Text, SnapshotMode: view.Mode, SnapshotOmitted: view.Omitted,
 		Error: payload.Error,
 	}
@@ -439,10 +505,20 @@ func compactSessionBatchArgs(args []string) []string {
 		compact[1] = args[1]
 		compact[2] = fmt.Sprintf("<text:%d chars>", len(args[2]))
 	}
+	if len(args) > 2 && args[0] == "evidence" {
+		compact[1] = args[1]
+		compact[2] = fmt.Sprintf("<expression:%d chars>", len(args[2]))
+	}
 	return compact
 }
 
 func compactSessionBatchAction(args []string, locator string) string {
+	if len(args) > 1 && args[0] == "evidence" {
+		return "captured named evidence " + args[1]
+	}
+	if len(args) > 0 && args[0] == "expect" {
+		return "expectation passed"
+	}
 	output := commandString(compactSessionBatchArgs(args))
 	if locator != "" {
 		output += "\nlocator: " + locator

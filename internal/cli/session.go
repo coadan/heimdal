@@ -138,7 +138,8 @@ type sessionSaveOptions struct {
 
 type sessionDiagnoseOptions struct {
 	SessionOptions
-	Stop bool
+	Stop       bool
+	Screenshot bool
 }
 
 type sessionBatchOptions struct {
@@ -302,6 +303,15 @@ Measure options:
   --session NAME   Named browser session
   --json           Print bounded structured layout evidence
 
+Diagnose options:
+  --screenshot     Capture a screenshot with the diagnostic packet
+  --stop           Close the browser and owned app after evidence capture
+
+Batch step forms:
+  {"command":"click","args":["e12"]}
+  {"command":"expect","args":["--role","button","--name","Saved"]}
+  {"command":"evidence","args":["save.state","() => ({ saved: true })"]}
+
 Timeline/report options:
   --failures       Return only failed actions
   --category NAME  Filter by navigation, interaction, wait, evidence, assertion,
@@ -328,8 +338,8 @@ Examples:
   heimdal session checkpoint "entered checkout"
   heimdal session timeline --json
   heimdal session measure --viewport 360x800 --json
-  heimdal session batch --file ./browser-steps.json
-  heimdal session diagnose --json
+  heimdal session batch --file ./browser-steps.json --json
+  heimdal session diagnose --screenshot --stop --json
   heimdal session save --test tests/browser/exploration.spec.ts
 `
 
@@ -606,6 +616,14 @@ func executeSessionAction(ctx context.Context, project Project, state *SessionSt
 		waitOptions.Verbose, waitOptions.FullJSON = options.Verbose, options.FullJSON
 		return executeSessionWaitAction(ctx, project, state, statePath, waitOptions)
 	}
+	if action == "expect" {
+		expectOptions, err := parseSessionExpectOptions(options.Forwarded)
+		if err != nil {
+			return failedSessionGrammarResponse(*state, []string{"expect"}, err, sessionActionCorrection("expect"), options.FullJSON)
+		}
+		expectOptions.FullJSON = options.FullJSON
+		return executeSessionExpectAction(ctx, project, state, statePath, expectOptions)
+	}
 	logicalArgs := append([]string{action}, options.Forwarded...)
 	if action == "snapshot" {
 		logicalArgs = sessionSnapshotArgs(options.Boxes, options.Verbose, options.Forwarded)
@@ -721,6 +739,9 @@ func runSessionDiagnose(ctx context.Context, args []string, out, errOut io.Write
 	}
 
 	commands := [][]string{{"console", "error"}, {"requests"}, sessionSnapshotArgs(options.Boxes, options.Verbose, nil)}
+	if diagnoseOptions.Screenshot {
+		commands = append([][]string{{"screenshot"}}, commands...)
+	}
 	var output []string
 	var snapshot string
 	var snapshotResult sessionCommandResult
@@ -799,14 +820,20 @@ func parseSessionDiagnoseOptions(args []string) (sessionDiagnoseOptions, error) 
 	options := sessionDiagnoseOptions{}
 	common := make([]string, 0, len(args))
 	for _, arg := range args {
-		if arg == "--stop" {
+		switch arg {
+		case "--stop":
 			if options.Stop {
 				return options, errors.New("--stop may only be specified once")
 			}
 			options.Stop = true
-			continue
+		case "--screenshot":
+			if options.Screenshot {
+				return options, errors.New("--screenshot may only be specified once")
+			}
+			options.Screenshot = true
+		default:
+			common = append(common, arg)
 		}
-		common = append(common, arg)
 	}
 	parsed, err := parseSessionOptions(common)
 	options.SessionOptions = parsed
@@ -1811,7 +1838,7 @@ func sessionActionTestLines(action SessionActionRecord) []string {
 		return quoteTypeScript(action.Args[index])
 	}
 	switch command {
-	case "open", "snapshot", "screenshot", "measure", "console", "requests", "highlight", "find", "tab-list", "request", "request-headers", "request-body", "response-headers", "response-body", "cookie-list", "cookie-get", "localstorage-list", "localstorage-get", "sessionstorage-list", "sessionstorage-get", "checkpoint":
+	case "open", "snapshot", "screenshot", "measure", "evidence", "console", "requests", "highlight", "find", "tab-list", "request", "request-headers", "request-body", "response-headers", "response-body", "cookie-list", "cookie-get", "localstorage-list", "localstorage-get", "sessionstorage-list", "sessionstorage-get", "checkpoint":
 		return nil
 	case "goto":
 		return []string{"await page.goto(" + quoted(1) + ");"}

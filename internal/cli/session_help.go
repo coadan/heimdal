@@ -49,10 +49,11 @@ Usage:
 	"diagnose": `Collect console errors, failed requests, and current semantic state
 
 Usage:
-  heimdal session diagnose [--name NAME] [--stop] [--json|--json=full]
+  heimdal session diagnose [--name NAME] [--screenshot] [--stop] [--json|--json=full]
 
 Repeated console and request failures are grouped into bounded signatures.
---stop closes a non-group browser and its owned app after evidence capture.
+--screenshot adds visual evidence to the same final command. --stop closes a
+non-group browser and its owned app after evidence capture.
 `,
 	"wait": `Wait for user-visible semantic state through Playwright
 
@@ -121,7 +122,9 @@ Usage:
   heimdal session batch --file FILE|- [--name NAME] [--json|--json=full]
 
 Safe unambiguous batches use one Playwright code invocation plus one final ref
-refresh; JSON reports execution mode and Playwright invocation count.
+refresh. Batches support ordinary actions, semantic expect steps, and bounded
+named JSON evidence with {"command":"evidence","args":[NAME,EXPRESSION]}.
+JSON reports execution mode, Playwright invocation count, and named evidence.
 `,
 	"save": `Save a session transcript and optional Playwright test draft
 
