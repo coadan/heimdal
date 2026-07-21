@@ -474,15 +474,16 @@ Run `heimdal help` for the complete command summary and
 
 ## Agent benchmark
 
-On 2026-07-20, paired agents completed the same tasks from the same small React
-workspace. They used identical model settings and preinstalled dependencies.
-All four results passed independent tests, builds, diff review, and browser
-verification.
+In paired runs on 2026-07-20 and 2026-07-21, agents completed the same tasks
+from the same small React workspace. They used identical model settings and
+preinstalled dependencies. All four results passed independent tests, builds,
+diff review, and browser verification.
 
 ### What the agents showed
 
-- **Coding:** Heimdal reduced browser rounds from 9 to 5, but took 19% longer
-  and used 8% more input tokens. It was not cheaper across every measure.
+- **Coding:** Both agents used 6 browser rounds. Heimdal issued 10 rather than
+  12 browser commands, used 18% fewer input tokens and 2% fewer output tokens,
+  and finished within 1% of the direct Playwright CLI lane.
 - **Responsive design:** Heimdal reached the result in one CSS iteration instead
   of two. It used 3 rather than 7 browser rounds, 23% fewer input tokens, and
   25% less wall time.
@@ -497,15 +498,17 @@ task depends on visual decisions. It does not guarantee lower whole-task cost.
 
 | Task | Tool | Rounds | Commands | Time | Input tokens | Output tokens |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
-| Theme feature | Playwright CLI | 9 | 11 | 315.5 s | 702,459 | 11,630 |
-| Theme feature | Heimdal | 5 | 12 | 375.4 s | 760,176 | 11,070 |
+| Theme feature | Playwright CLI | 6 | 12 | 255.4 s | 738,266 | 9,695 |
+| Theme feature | Heimdal | 6 | 10 | 253.3 s | 607,044 | 9,470 |
 | Responsive design | Playwright CLI | 7 | 27 | 270.6 s | 688,329 | 10,230 |
 | Responsive design | Heimdal | 3 | 8 | 203.6 s | 529,646 | 6,803 |
 
 A browser round is one agent shell turn containing browser work. Browser
 commands are CLI commands issued by the agent; a composite Heimdal command can
 perform several upstream Playwright operations. The direct design lane also
-issued one unsupported command that printed upstream help.
+issued one unsupported command that printed upstream help. In the coding rerun,
+the Heimdal agent used named evidence and combined final diagnosis, but did not
+choose the available atomic batch fast path.
 
 </details>
 
