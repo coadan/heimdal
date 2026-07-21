@@ -301,6 +301,15 @@ named JSON evidence can share one agent round trip:
 heimdal session batch --file browser-steps.json --name qa --json
 ```
 
+For a short flow, skip the temporary file:
+
+```bash
+heimdal session batch --session qa --json -- \
+  click e8 --then \
+  expect --role button --name "Saved" --then \
+  evidence save.state "() => ({ saved: true })"
+```
+
 Batch execution stops at the first failed step. Ordinary action JSON omits
 repeated session metadata; use `--json=full` when that metadata is required.
 When every step has an unambiguous retained semantic locator and a stable
@@ -311,6 +320,12 @@ snapshots. The response reports `execution: "atomic"`,
 `playwright_invocations: 2`, and an `evidence` object. Arbitrary commands,
 ambiguous refs, expanded/boxed output, and change waits use the stepwise path
 for correctness.
+
+Capture one bounded measurement without a batch when no action surrounds it:
+
+```bash
+heimdal session evidence save.state "() => ({ saved: true })" --json
+```
 
 For final visual evidence and cleanup, combine the screenshot with diagnosis:
 

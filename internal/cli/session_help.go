@@ -76,6 +76,14 @@ Usage:
 Use --session NAME to select a named browser. Passing assertions graduate into
 session save --test output.
 `,
+	"evidence": `Capture bounded named JSON from the current page through Playwright
+
+Usage:
+  heimdal session evidence NAME EXPRESSION [--session NAME] [--json|--json=full]
+
+EXPRESSION is a Playwright page evaluation function and must return JSON. Use
+batch when evidence belongs to an already-known action and assertion flow.
+`,
 	"timeline": `Synthesize an ordered session timeline from retained action evidence
 
 Usage:
@@ -120,11 +128,13 @@ combined with TARGET.
 
 Usage:
   heimdal session batch --file FILE|- [--name NAME] [--json|--json=full]
+  heimdal session batch [--session NAME] [--json|--json=full] -- COMMAND [ARGS...] [--then COMMAND [ARGS...]...]
 
 Safe unambiguous batches use one Playwright code invocation plus one final ref
 refresh. Batches support ordinary actions, semantic expect steps, and bounded
 named JSON evidence with {"command":"evidence","args":[NAME,EXPRESSION]}.
-JSON reports execution mode, Playwright invocation count, and named evidence.
+The inline --then form avoids a temporary JSON file. JSON reports execution
+mode, Playwright invocation count, and named evidence.
 `,
 	"save": `Save a session transcript and optional Playwright test draft
 

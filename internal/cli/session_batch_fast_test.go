@@ -253,6 +253,52 @@ func TestSessionBatchRejectsInvalidNamedEvidence(t *testing.T) {
 	}
 }
 
+func TestInlineSessionBatchParsesKnownFlowWithoutAFile(t *testing.T) {
+	options, err := parseSessionBatchOptions([]string{
+		"--session", "qa", "--json", "--",
+		"click", "e3", "--then",
+		"expect", "--role", "button", "--name", "Saved", "--then",
+		"evidence", "save.state", "() => ({ saved: true })",
+	})
+	if err != nil || options.Name != "qa" || !options.JSON {
+		t.Fatalf("inline batch options = %#v, %v", options, err)
+	}
+	document, contents, err := readInlineSessionBatch(options.Inline)
+	if err != nil || len(document.Steps) != 3 || document.Steps[1].Command != "expect" || document.Steps[2].Args[0] != "save.state" || !json.Valid(contents) {
+		t.Fatalf("inline batch = %#v, %s, %v", document, contents, err)
+	}
+	for _, args := range [][]string{{"--", "--then", "click", "e3"}, {"--", "click", "e3", "--then"}, {"--file", "steps.json", "--", "click", "e3"}} {
+		parsed, parseErr := parseSessionBatchOptions(args)
+		if parseErr == nil {
+			_, _, parseErr = readInlineSessionBatch(parsed.Inline)
+		}
+		if parseErr == nil {
+			t.Fatalf("invalid inline batch was accepted: %v", args)
+		}
+	}
+}
+
+func TestSessionBatchInlineFormUsesAtomicPath(t *testing.T) {
+	payload := sessionBatchFastPayload{Version: 1, Steps: []sessionBatchFastStepPayload{
+		{Index: 1, Status: "passed", Snapshot: "- main:\n  - button \"Saved\""},
+		{Index: 2, Status: "passed"},
+	}}
+	root, _, calls := setupSessionBatchFastFixture(t, payload)
+	var out, errOut strings.Builder
+	code := runSessionBatch(context.Background(), []string{
+		"--dir", root, "--name", "batch", "--json", "--",
+		"click", "e3", "--then", "expect", "--role", "button", "--name", "Saved",
+	}, &out, &errOut)
+	var response sessionBatchResponse
+	if err := json.Unmarshal([]byte(out.String()), &response); err != nil {
+		t.Fatal(err)
+	}
+	if code != 0 || response.Status != "passed" || response.Execution != "atomic" || response.Invocations != 2 || len(response.Steps) != 2 {
+		t.Fatalf("inline atomic batch = %#v (exit %d, stderr %s)", response, code, errOut.String())
+	}
+	assertSessionBatchCalls(t, calls, []string{"run-code", "snapshot"})
+}
+
 func TestSessionBatchChangeWaitKeepsRaceSafeSequentialPath(t *testing.T) {
 	document := sessionBatchDocument{Version: 1, Steps: []sessionBatchStep{{Command: "wait", Args: []string{"--change", "--timeout", "2s"}}}}
 	state := SessionState{LastSnapshot: "retained.yml"}

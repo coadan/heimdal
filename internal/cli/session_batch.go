@@ -64,7 +64,13 @@ func runSessionBatch(ctx context.Context, args []string, out, errOut io.Writer) 
 	if err != nil {
 		return reportError(options.JSON, err, out, errOut)
 	}
-	document, contents, err := readSessionBatch(options.File, os.Stdin)
+	var document sessionBatchDocument
+	var contents []byte
+	if len(options.Inline) > 0 {
+		document, contents, err = readInlineSessionBatch(options.Inline)
+	} else {
+		document, contents, err = readSessionBatch(options.File, os.Stdin)
+	}
 	if err != nil {
 		return reportError(options.JSON, err, out, errOut)
 	}
@@ -146,6 +152,10 @@ func parseSessionBatchOptions(args []string) (sessionBatchOptions, error) {
 	var common []string
 	options := sessionBatchOptions{}
 	for index := 0; index < len(args); index++ {
+		if args[index] == "--" {
+			options.Inline = append([]string(nil), args[index+1:]...)
+			break
+		}
 		if args[index] != "--file" {
 			common = append(common, args[index])
 			continue
@@ -166,12 +176,40 @@ func parseSessionBatchOptions(args []string) (sessionBatchOptions, error) {
 		return options, err
 	}
 	if len(parsed.Forwarded) > 0 {
-		return options, fmt.Errorf("session batch does not accept Playwright arguments outside the batch file: %s", strings.Join(parsed.Forwarded, " "))
+		return options, fmt.Errorf("session batch arguments must follow --file or the inline -- separator: %s", strings.Join(parsed.Forwarded, " "))
 	}
-	if options.File == "" {
-		return options, errors.New("session batch requires --file FILE|-")
+	if options.File != "" && len(options.Inline) > 0 {
+		return options, errors.New("session batch accepts either --file or inline steps after --, not both")
+	}
+	if options.File == "" && len(options.Inline) == 0 {
+		return options, errors.New("session batch requires --file FILE|- or inline COMMAND steps after --")
 	}
 	return options, nil
+}
+
+func readInlineSessionBatch(args []string) (sessionBatchDocument, []byte, error) {
+	document := sessionBatchDocument{Version: 1}
+	for len(args) > 0 {
+		if args[0] == "--then" {
+			return sessionBatchDocument{}, nil, errors.New("inline session batch has an empty step before --then")
+		}
+		next := len(args)
+		for index := 1; index < len(args); index++ {
+			if args[index] == "--then" {
+				next = index
+				break
+			}
+		}
+		document.Steps = append(document.Steps, sessionBatchStep{Command: args[0], Args: append([]string(nil), args[1:next]...)})
+		if next == len(args) {
+			break
+		}
+		args = args[next+1:]
+		if len(args) == 0 {
+			return sessionBatchDocument{}, nil, errors.New("inline session batch has an empty step after --then")
+		}
+	}
+	return canonicalSessionBatch(document)
 }
 
 func readSessionBatch(path string, stdin io.Reader) (sessionBatchDocument, []byte, error) {
@@ -204,6 +242,10 @@ func readSessionBatch(path string, stdin io.Reader) (sessionBatchDocument, []byt
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		return sessionBatchDocument{}, nil, errors.New("parse session batch JSON: expected one JSON document")
 	}
+	return canonicalSessionBatch(document)
+}
+
+func canonicalSessionBatch(document sessionBatchDocument) (sessionBatchDocument, []byte, error) {
 	if document.Version == 0 {
 		document.Version = 1
 	}
@@ -255,26 +297,14 @@ func validateSessionBatchStep(step sessionBatchStep) error {
 
 func executeSessionBatchEvidence(ctx context.Context, project Project, state *SessionState, statePath string, index int, step sessionBatchStep) sessionBatchStepResult {
 	name, expression := step.Args[0], step.Args[1]
-	logicalArgs := []string{"evidence", name, expression}
-	runtimeCode := "async page => await page.evaluate(" + expression + ")"
-	result, commandErr := runSessionCommandModeArgs(ctx, project, state, statePath, logicalArgs, []string{"run-code", runtimeCode}, "", true)
-	stepResult := sessionBatchStepResult{Index: index, Command: compactSessionBatchArgs(logicalArgs), Status: "passed", Action: result.Sequence, EvidenceName: name}
-	if commandErr != nil {
-		stepResult.Status = "failed"
-		stepResult.Error = commandErr.Error()
-		if detail := compactCLIOutput(joinOutputs(result.Stdout, result.Stderr)); detail != "" {
-			stepResult.Error = truncateDisplay(detail, 800)
-		}
-		return stepResult
+	response := executeSessionEvidenceAction(ctx, project, state, statePath, name, expression, false)
+	stepResult := sessionBatchStepResult{
+		Index: index, Command: response.Command, Status: response.Status, Action: response.Action,
+		Output: response.Output, Error: response.Error, EvidenceName: name,
 	}
-	payload, err := parseSessionBatchEvidence(result.Stdout)
-	if err != nil {
-		stepResult.Status = "failed"
-		stepResult.Error = err.Error()
-		return stepResult
+	if response.Evidence != nil {
+		stepResult.Evidence = response.Evidence[name]
 	}
-	stepResult.Output = "captured named evidence " + name
-	stepResult.Evidence = payload
 	return stepResult
 }
 

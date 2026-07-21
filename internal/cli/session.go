@@ -102,32 +102,33 @@ type sessionCommandResult struct {
 }
 
 type SessionResponse struct {
-	SchemaVersion   int                `json:"schema_version"`
-	Status          string             `json:"status"`
-	Session         string             `json:"session"`
-	Group           string             `json:"group,omitempty"`
-	Actor           string             `json:"actor,omitempty"`
-	Closed          bool               `json:"closed,omitempty"`
-	RunID           string             `json:"run_id,omitempty"`
-	Root            string             `json:"root,omitempty"`
-	URL             string             `json:"url,omitempty"`
-	Port            int                `json:"port,omitempty"`
-	Action          int                `json:"action,omitempty"`
-	Command         []string           `json:"command,omitempty"`
-	Output          string             `json:"output,omitempty"`
-	Snapshot        string             `json:"snapshot,omitempty"`
-	SnapshotMode    string             `json:"snapshot_mode,omitempty"`
-	SnapshotOmitted int                `json:"snapshot_omitted,omitempty"`
-	Stderr          string             `json:"stderr,omitempty"`
-	Error           string             `json:"error,omitempty"`
-	Correction      string             `json:"correction,omitempty"`
-	Measurement     *LayoutMeasurement `json:"measurement,omitempty"`
-	Graduation      *SessionGraduation `json:"graduation,omitempty"`
-	Issues          []string           `json:"issues,omitempty"`
-	Server          string             `json:"server,omitempty"`
-	Artifacts       map[string]string  `json:"artifacts,omitempty"`
-	State           *SessionState      `json:"state,omitempty"`
-	CompactJSON     bool               `json:"-"`
+	SchemaVersion   int                        `json:"schema_version"`
+	Status          string                     `json:"status"`
+	Session         string                     `json:"session"`
+	Group           string                     `json:"group,omitempty"`
+	Actor           string                     `json:"actor,omitempty"`
+	Closed          bool                       `json:"closed,omitempty"`
+	RunID           string                     `json:"run_id,omitempty"`
+	Root            string                     `json:"root,omitempty"`
+	URL             string                     `json:"url,omitempty"`
+	Port            int                        `json:"port,omitempty"`
+	Action          int                        `json:"action,omitempty"`
+	Command         []string                   `json:"command,omitempty"`
+	Output          string                     `json:"output,omitempty"`
+	Snapshot        string                     `json:"snapshot,omitempty"`
+	SnapshotMode    string                     `json:"snapshot_mode,omitempty"`
+	SnapshotOmitted int                        `json:"snapshot_omitted,omitempty"`
+	Stderr          string                     `json:"stderr,omitempty"`
+	Error           string                     `json:"error,omitempty"`
+	Correction      string                     `json:"correction,omitempty"`
+	Measurement     *LayoutMeasurement         `json:"measurement,omitempty"`
+	Evidence        map[string]json.RawMessage `json:"evidence,omitempty"`
+	Graduation      *SessionGraduation         `json:"graduation,omitempty"`
+	Issues          []string                   `json:"issues,omitempty"`
+	Server          string                     `json:"server,omitempty"`
+	Artifacts       map[string]string          `json:"artifacts,omitempty"`
+	State           *SessionState              `json:"state,omitempty"`
+	CompactJSON     bool                       `json:"-"`
 }
 
 type sessionSaveOptions struct {
@@ -144,7 +145,8 @@ type sessionDiagnoseOptions struct {
 
 type sessionBatchOptions struct {
 	SessionOptions
-	File string
+	File   string
+	Inline []string
 }
 
 type agentCLIConfig struct {
@@ -196,6 +198,8 @@ func runSession(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return runSessionWait(ctx, args[1:], out, errOut)
 	case "expect":
 		return runSessionExpect(ctx, args[1:], out, errOut)
+	case "evidence":
+		return runSessionEvidence(ctx, args[1:], out, errOut)
 	case "timeline":
 		return runSessionTimeline(args[1:], out, errOut)
 	case "report":
@@ -231,11 +235,12 @@ Usage:
   heimdal session diagnose [options]
   heimdal session wait (--role ROLE [--name NAME] | --text TEXT | --change) [options]
   heimdal session expect (--role ROLE [--name NAME] | --text TEXT | --url URL | --target TARGET --value VALUE) [options]
+  heimdal session evidence NAME EXPRESSION [options]
   heimdal session timeline [NAME] [options]
   heimdal session report [NAME] [options]
   heimdal session checkpoint LABEL [options]
   heimdal session measure [TARGET] [--viewport WIDTHxHEIGHT] [options]
-  heimdal session batch --file FILE|- [options]
+  heimdal session batch (--file FILE|- | -- COMMAND [ARGS...] [--then COMMAND [ARGS...]...]) [options]
   heimdal session save [options]
   heimdal session <PLAYWRIGHT_CLI_COMMAND> [options]
 
@@ -293,6 +298,10 @@ Expect options:
   --state STATE    visible, hidden, enabled, disabled, checked, or unchecked
   --timeout AGE    Assertion timeout such as 5s (default: 5s)
 
+Evidence arguments:
+  NAME             Stable evidence key such as save.state
+  EXPRESSION       Page evaluation function that returns bounded JSON
+
 Save options:
   --test PATH      Write a Playwright test draft
   --ready          Fail unless the draft has assertions and portable actions
@@ -311,6 +320,7 @@ Batch step forms:
   {"command":"click","args":["e12"]}
   {"command":"expect","args":["--role","button","--name","Saved"]}
   {"command":"evidence","args":["save.state","() => ({ saved: true })"]}
+  inline: -- click e12 --then expect --role button --name Saved
 
 Timeline/report options:
   --failures       Return only failed actions
@@ -335,10 +345,11 @@ Examples:
   heimdal session wait --role button --name "Continue" --state enabled --timeout 30s
   heimdal session wait --change --settle 300ms
   heimdal session expect --role button --name "Continue" --state visible
+  heimdal session evidence save.state "() => ({ saved: true })" --json
   heimdal session checkpoint "entered checkout"
   heimdal session timeline --json
   heimdal session measure --viewport 360x800 --json
-  heimdal session batch --file ./browser-steps.json --json
+  heimdal session batch --json -- click e12 --then expect --role button --name Saved
   heimdal session diagnose --screenshot --stop --json
   heimdal session save --test tests/browser/exploration.spec.ts
 `
@@ -1711,6 +1722,16 @@ func printSessionResponse(out, errOut io.Writer, response SessionResponse, asJSO
 		fmt.Fprintln(out, "Snapshot:")
 		fmt.Fprintln(out, response.Snapshot)
 	}
+	if len(response.Evidence) > 0 {
+		names := make([]string, 0, len(response.Evidence))
+		for name := range response.Evidence {
+			names = append(names, name)
+		}
+		sortStrings(names)
+		for _, name := range names {
+			fmt.Fprintf(out, "Evidence %s: %s\n", name, response.Evidence[name])
+		}
+	}
 	if response.Stderr != "" {
 		fmt.Fprint(errOut, response.Stderr)
 		if !strings.HasSuffix(response.Stderr, "\n") {
@@ -1768,6 +1789,7 @@ func compactSessionResponse(response SessionResponse) SessionResponse {
 		Error:           response.Error,
 		Correction:      response.Correction,
 		Measurement:     response.Measurement,
+		Evidence:        response.Evidence,
 		Graduation:      response.Graduation,
 		Issues:          response.Issues,
 	}

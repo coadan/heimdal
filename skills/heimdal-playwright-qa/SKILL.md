@@ -168,15 +168,14 @@ safe consecutive interactions when the retained timeline supports it.
 Checkpoints label recoverable session state and appear in reports; they do not
 make arbitrary repository test fixtures resumable.
 
-Once a verification flow is known, put its actions, semantic assertions, and
-bounded named JSON evidence in one batch:
-
-```json
-{"version":1,"steps":[{"command":"click","args":["e8"]},{"command":"expect","args":["--role","button","--name","Saved"]},{"command":"evidence","args":["save.state","() => ({ saved: true })"]}]}
-```
+Once a short verification flow is known, put its actions, semantic assertions,
+and bounded named JSON evidence in one inline batch:
 
 ```bash
-heimdal session batch --file browser-steps.json --json
+heimdal session batch --json -- \
+  click e8 --then \
+  expect --role button --name "Saved" --then \
+  evidence save.state "() => ({ saved: true })"
 ```
 
 The batch stops at the first failed step and returns final fresh refs. Safe
@@ -188,6 +187,11 @@ the response's `evidence` object and must return JSON. Check `execution` and
 stepwise path. Keep `wait --change` outside an atomic batch so its retained-
 snapshot race check remains active. Action JSON is compact by default; use
 `--json=full` only when repeated session metadata is needed.
+
+Use `--file browser-steps.json` for a longer or reusable batch. When no action
+surrounds a measurement, capture it directly with `heimdal session evidence
+NAME EXPRESSION --json`. Expressions run through Playwright page evaluation,
+must return bounded JSON, and must not contain secrets.
 
 For a bounded multi-user flow, use one group instead of independently managing
 several app fixtures:
