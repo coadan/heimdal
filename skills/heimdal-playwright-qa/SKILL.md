@@ -168,15 +168,26 @@ safe consecutive interactions when the retained timeline supports it.
 Checkpoints label recoverable session state and appear in reports; they do not
 make arbitrary repository test fixtures resumable.
 
-Once a short verification flow is known, put its actions, semantic assertions,
-and bounded named JSON evidence in one inline batch:
+Once a short verification flow is known, batch its actions, semantic assertions,
+and bounded named JSON evidence. The payoff is one agent command/response round
+for the whole flow, without losing per-step failure attribution:
 
 ```bash
 heimdal session batch --json -- \
   click e8 --then \
-  expect --role button --name "Saved" --then \
-  evidence save.state "() => ({ saved: true })"
+  expect --role button --name "Use light theme" --state visible --then \
+  evidence theme.after-click "() => ({ theme: document.documentElement.dataset.theme, stored: localStorage.getItem('theme') })" --then \
+  reload --then \
+  expect --role button --name "Use light theme" --state visible --then \
+  evidence theme.after-reload "() => ({ theme: document.documentElement.dataset.theme, stored: localStorage.getItem('theme') })"
 ```
+
+This six-step example verifies that a theme toggle changes the visible control
+and that both the DOM state and persisted preference survive a reload. On the
+atomic path it needs two Playwright invocations—one `run-code` plus one final
+ref-refresh snapshot—instead of six separate command/response loops. Replace
+`e8`, the accessible name, and the evidence expression with values from the
+current app.
 
 The batch stops at the first failed step and returns final fresh refs. Safe
 batches with unambiguous retained refs run as one Playwright code block plus one
