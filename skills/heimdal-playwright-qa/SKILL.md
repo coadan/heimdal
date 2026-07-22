@@ -19,6 +19,8 @@ heimdal run -- tests/browser/<flow>.spec.ts --grep <behavior>
 
 `doctor` status `issues` fails preflight. Only run status `passed` is passing
 evidence; `skipped` is nonzero when Playwright discovers but executes no tests.
+Give `heimdal run` a 30-second initial wait. If the shell yields a process
+session, continue it at 5–30-second intervals; never restart the run.
 
 **Unknown behavior or visual exploration:** use one persistent session.
 
