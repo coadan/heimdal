@@ -5,326 +5,100 @@ description: Use when an agent needs to explore, diagnose, or regression-test a 
 
 # Heimdal Playwright QA
 
-Use Heimdal for worktree-isolated browser QA. Playwright remains the only
-browser runtime and owns actions, locators, assertions, traces, and reports.
-Heimdal manages project discovery, sessions, app processes, and compact
-evidence.
+Run Heimdal from the target worktree. Playwright is the only browser runtime;
+Heimdal owns app/session lifecycle and compact evidence.
 
-## Pick the shortest workflow
+## Choose one flow
 
-Use one focused repository test for known behavior:
+**Known behavior:** run the focused repository test.
 
 ```bash
 heimdal doctor
-heimdal run -- tests/browser/<flow>.spec.ts --grep "<behavior>"
+heimdal run -- tests/browser/<flow>.spec.ts --grep <behavior>
 ```
 
-Treat doctor status `issues` as a failed preflight. Configured project checks
-represent required runtimes or build prerequisites and run without a shell.
+`doctor` status `issues` fails preflight. Only run status `passed` is passing
+evidence; `skipped` is nonzero when Playwright discovers but executes no tests.
 
-Treat only `passed` as passing evidence. Heimdal reports `skipped` with a
-nonzero exit when Playwright discovers tests but executes none. Run and report
-JSON expose structured test counts, a primary failure fingerprint, deduplicated
-warnings, artifact sizes, and a bounded Playwright failure-context excerpt; use
-those fields before reading log tails. Failed reports also fold in the retained
-trace's failing action, locator, nearby actions, and DOM excerpt when available.
-A terminal runner error takes precedence over caught assertion probes; inspect
-`failure_source`, `classification`, and `caught_probe_count` before treating an
-errored trace action as causal.
-A long JSON run emits progress on stderr, and `report --run ID --json` can be
-polled for structured live progress.
-
-Use one persistent session for exploration:
+**Unknown behavior or visual exploration:** use one persistent session.
 
 ```bash
 heimdal doctor
-heimdal session start
-heimdal session click e12
-heimdal session fill e5 "hello"
-heimdal session wait --role button --name "Continue" --state enabled --timeout 30s
+heimdal session start --dir .
 heimdal session diagnose --json
 heimdal session stop
 ```
 
-Run from the target worktree. Add `--dir PATH` from elsewhere. Use `--name`
-only for concurrent sessions or cross-directory lookup. Sessions are headless
-by default; add `--headed` when a person needs to inspect the browser.
+Use `--name` only for concurrent/cross-directory lookup and `--headed` only
+when a person must watch. Use a session group for bounded multi-user flows:
+`session group start --actors host,guest`; target commands with `--actor`; stop
+the group once.
 
-Discover lifecycle state before guessing at session names or inspecting files:
+## Interact without polling
 
-```bash
-heimdal sessions list --json
-heimdal sessions list --status stale --json
-heimdal sessions prune --dry-run --json
-```
+- Start/actions return accessibility snapshots or semantic deltas with fresh
+  refs. Use them; do not immediately `observe` again.
+- Prefer current refs and role/name/text locators over CSS, XPath, or viewport
+  coordinates. Use `--full` only for the full tree and `--boxes` only for
+  layout/coordinate work.
+- Use `session wait` instead of repeated observe/find calls or sleeps:
+  `wait --role button --name Continue --state enabled --timeout 30s`,
+  `wait --text <text>`, or `wait --change [--settle 300ms]`.
+- Record outcomes with `session expect`; these graduate into Playwright
+  assertions.
+- Use `session measure --viewport 360x800 --json` for layout geometry,
+  overflow, clipping, touch targets, and grid/flex structure. Request
+  screenshots only for visual qualities measurement cannot represent.
+- For canvas/spatial controls, use element-relative `click`, `pointer move`, or
+  `pointer drag` with `--within REF`; reserve raw mouse coordinates for regions
+  without a stable semantic target.
+- Use `--verbose` or forward options after `--` only when compact output omits
+  a needed fact.
 
-The inventory probes the owning Playwright workspace. Treat `stale` as a dead
-browser or owned app, `unknown` as an unavailable runtime probe, and `broken` as
-an invalid global index. Pruning removes stale indexes but preserves evidence;
-`gc` integrates the same cleanup.
+## Collapse known interaction rounds
 
-If `doctor` reports a missing component, install only that component:
+Once refs and assertions are known, use `session batch --json --` with actions
+joined by `--then`. A batch stops on the first failure, preserves step-level
+attribution, and returns fresh refs. Named `evidence NAME EXPRESSION` must
+return bounded JSON without secrets. Check `execution` and
+`playwright_invocations`; unsupported batches fall back stepwise. Keep
+`wait --change` outside atomic batches so retained-snapshot race detection
+remains active.
 
-```bash
-heimdal install agent-cli
-heimdal install agent-browser chromium
-heimdal install chromium
-```
+Use `session checkpoint` for meaningful long-flow states and
+`session timeline --json` or `session report --json` for bounded history.
+Page with filters/limits; use full JSON only when every entry is required.
 
-The first two support sessions; the last supports repository tests.
+## Diagnose summaries first
 
-## Keep interaction bounded
+- Interactive: `heimdal session diagnose --json`; add `--screenshot` only for
+  visual evidence and `--stop` only for final non-group inspection.
+- Deterministic: `heimdal report --run latest --json`. Trust structured test
+  counts, `failure_source`, classification, fingerprint, caught probes, and
+  bounded trace context before logs or raw artifacts.
+- Use `trace inspect --run latest --around-failure` only when the report is
+  insufficient. Use indexed `runs list/show/compare`, not artifact-directory
+  scans. Run `heimdal gc --dry-run` before manual cleanup.
+- `session save --test PATH --ready` writes and audits a draft. Repair missing
+  assertions, coordinates, stale refs, eval/run-code, or unsupported actions,
+  then run the repository test before calling it regression evidence.
 
-`session start` returns a semantic accessibility snapshot. State-changing
-actions return a semantic delta when it is smaller, with fresh refs for changed
-controls. Reloads and same-page navigation return fresh refs for every current
-control while omitting unchanged static content; materially different pages
-fall back to a full snapshot. Pure reordering and moves between meaningful
-regions count as changes. Do not immediately call `observe` again. Prefer
-current refs and user-facing locators over CSS, XPath, or coordinates. Add
-`--full` when the complete tree is needed and `--boxes` only for coordinate or
-layout work.
+## Fixture contract
 
-Use snapshots for structure and interaction. Request a screenshot only for
-visual appearance or layout. Use `--verbose` only when compact output omits a
-needed fact. Forward uncommon Playwright CLI options after `--`:
-
-```bash
-heimdal session observe -- --depth=4
-heimdal session screenshot -- --full-page
-```
-
-For design decisions, use `session measure --viewport 360x800 --json` before
-writing ad hoc eval scripts or separately resizing and measuring. Omit
-`--viewport` to measure the current viewport. The bounded packet reports
-viewport/document geometry, overflow, clipping, touch-target warnings, controls
-and early leaf content, plus semantic, grid/flex, and padded/scroll regions with
-tracks or direction, padding, gap, and overflow. One packet per viewport should
-usually support the layout decision. Use `session measure TARGET --json` only when a remaining
-decision needs that target's rectangle and key computed styles; TARGET and
-`--viewport` are intentionally separate. Then request a screenshot only for
-visual qualities the measurement cannot represent.
-
-For canvas or spatial controls, measure once and use element-relative pointer
-coordinates instead of viewport arithmetic or raw mouse sequences:
-
-```bash
-heimdal session click --within e42 --at 62%,35%
-heimdal session pointer move --within e42 --at 62%,35%
-heimdal session pointer drag --within e42 --from 20%,50% --to 80%,50%
-```
-
-These actions remain Playwright bounding-box operations and graduate into
-viewport-resilient test code.
-
-Use `pointer move --within` to reveal a hover state without pressing. Reserve
-`mouse move X Y` for a canvas region without a stable semantic target.
-
-For asynchronous UI, issue one semantic wait instead of repeatedly observing
-or sleeping. A role is the page's accessibility role (`button`, `link`,
-`textbox`, or similar). Wait by role and accessible name, visible text, or any
-semantic change; each successful wait returns the resulting delta:
-
-```bash
-heimdal session wait --role button --name "Continue" --state enabled --timeout 30s
-heimdal session wait --text "The world answers"
-heimdal session wait --change
-heimdal session wait --change --settle 300ms
-```
-
-Change waits compare against the retained Playwright snapshot first, so they
-also catch state that completed between agent commands. Use `--settle` for
-model-backed or multi-stage UI when the result should remain semantically quiet
-before continuing. All phases consume one timeout budget.
-
-Record the user-visible outcome with `session expect` during exploration so it
-graduates into a Playwright assertion:
-
-```bash
-heimdal session expect --role button --name "Continue" --state enabled
-heimdal session expect --text "Saved" --state visible
-heimdal session expect --url "http://127.0.0.1:4173/done"
-heimdal session expect --target e12 --value "ready"
-```
-
-On `wait`, `--name` is the accessible name; use `--session NAME` to select a
-named browser. Canonical targeted forms include `press TARGET KEY`, `type TARGET
-TEXT`, `fill TARGET TEXT --submit`, `click TARGET --force`, `mouse click X Y`,
-and `mouse move X Y`. Follow Heimdal's structured correction when a command
-shape is invalid.
-
-Checkpoint meaningful states in long explorations and use the synthesized
-timeline before reading individual action logs:
-
-```bash
-heimdal session checkpoint "entered checkout"
-heimdal session timeline --json
-heimdal session report --json
-heimdal session timeline --failures --limit 20 --json
-```
-
-Timeline and report output is a bounded phase/failure/recent-change view by
-default. Page long histories with `--from`, `--to`, `--limit`, `--category`, or
-`--failures`; follow `next_from`. Use `--json=full` only when every retained
-entry is necessary. A successful zero-error console check is not an issue.
-Treat report `suggestions` as workflow coaching, not failures: replace repeated
-snapshot/find polling with a semantic wait, checkpoint long phases, and batch
-safe consecutive interactions when the retained timeline supports it.
-Checkpoints label recoverable session state and appear in reports; they do not
-make arbitrary repository test fixtures resumable.
-
-Once a short verification flow is known, batch its actions, semantic assertions,
-and bounded named JSON evidence. The payoff is one agent command/response round
-for the whole flow, without losing per-step failure attribution:
-
-```bash
-heimdal session batch --json -- \
-  click e8 --then \
-  expect --role button --name "Use light theme" --state visible --then \
-  evidence theme.after-click "() => ({ theme: document.documentElement.dataset.theme, stored: localStorage.getItem('theme') })" --then \
-  reload --then \
-  expect --role button --name "Use light theme" --state visible --then \
-  evidence theme.after-reload "() => ({ theme: document.documentElement.dataset.theme, stored: localStorage.getItem('theme') })"
-```
-
-This six-step example verifies that a theme toggle changes the visible control
-and that both the DOM state and persisted preference survive a reload. On the
-atomic path it needs two Playwright invocations—one `run-code` plus one final
-ref-refresh snapshot—instead of six separate command/response loops. Replace
-`e8`, the accessible name, and the evidence expression with values from the
-current app.
-
-The batch stops at the first failed step and returns final fresh refs. Safe
-batches with unambiguous retained refs run as one Playwright code block plus one
-final ref-refresh snapshot while preserving per-step deltas, assertions,
-failure attribution, and test-generation locators. Named evidence appears in
-the response's `evidence` object and must return JSON. Check `execution` and
-`playwright_invocations`; unsupported or ambiguous batches fall back to the
-stepwise path. Keep `wait --change` outside an atomic batch so its retained-
-snapshot race check remains active. Action JSON is compact by default; use
-`--json=full` only when repeated session metadata is needed.
-
-Use `--file browser-steps.json` for a longer or reusable batch. When no action
-surrounds a measurement, capture it directly with `heimdal session evidence
-NAME EXPRESSION --json`. Expressions run through Playwright page evaluation,
-must return bounded JSON, and must not contain secrets.
-
-For a bounded multi-user flow, use one group instead of independently managing
-several app fixtures:
-
-```bash
-heimdal session group start --actors host,guest
-heimdal session click --actor guest e12
-heimdal session group timeline --json
-heimdal session group stop
-```
-
-Actors have isolated Playwright browser state but share the first actor's app
-process and URL. Ordinary session commands accept `--actor`; add `--group` only
-when the actor name is ambiguous across active groups. Stop the group once so
-non-owning browsers close before the shared app owner.
-
-## Diagnose from summaries first
-
-For an interactive failure, use one diagnostic packet:
-
-```bash
-heimdal session diagnose --json
-heimdal session diagnose --screenshot --stop --json
-```
-
-The compact packet groups repeated console and request failures by signature
-and returns a semantic delta when the page has not changed. Add `--screenshot`
-only when visual evidence matters. Use `--stop` only for the final inspection
-of a non-group session; it captures evidence before closing the browser and
-owned app, saving separate screenshot and lifecycle commands. Stop multi-actor
-sessions with `session group stop`.
-
-For a deterministic run, inspect the live or final report before opening raw
-artifacts:
-
-```bash
-heimdal report --run latest --json
-```
-
-The report includes bounded trace diagnosis when available. It correlates a
-terminal test error with a matching trace error or the last relevant action and
-classifies earlier continued-past assertions as caught probes. Use `heimdal
-trace inspect --run latest --around-failure` only for a separate trace packet or
-a direct trace path. Inspect raw artifacts only when these summaries point to
-them. Never put secrets in commands, screenshots, traces, metadata, or generated
-tests.
-
-Use the indexed history before scanning `.heimdal` directly:
-
-```bash
-heimdal runs list --status failed --since 2d --json
-heimdal runs show latest-failed --json
-heimdal runs compare <old-run> <new-run> --json
-heimdal runs pin <run-id>
-```
-
-Repeated failures are grouped by semantic fingerprint; comparison separately
-reports exact-message equality. Inventory provenance includes selectors, Git
-commit/dirty identity, and configured fixture-variable names plus set/unset
-state, never their values. Use `latest-failed` with report or trace when
-diagnosing the newest failure. Pin only evidence that must outlive normal
-retention, then unpin it with `runs pin <run-id> --remove`.
-
-Use `heimdal gc --dry-run` before manual artifact cleanup. Retention preserves
-pins, active runs, recent non-duplicate runs, and the configured number of
-distinct failure fingerprints within its byte budget. By default it compacts
-older copies of a repeated semantic failure while retaining the newest full
-evidence; exact within-run copies are hard-linked. Pruned runs remain as compact
-indexed history, so use `runs list` rather than scanning or deleting `.heimdal`
-paths.
-
-Use `session save --test PATH --ready` to audit the generated TypeScript draft.
-It fails readiness when assertions are missing or coordinate, stale-ref,
-evaluation, run-code, or unsupported actions still need repair. The draft is
-still written. A passing readiness audit means the recorded actions are
-portable; run the repository-owned test before treating it as regression
-evidence.
-
-## Project and fixture contract
-
-Connect to an existing app with `session start --url URL`. To let Heimdal start
-and stop the app, define the smallest useful `.heimdal.json`:
-
-```json
-{
-  "version": 1,
-  "session": {
-    "command": ["npm", "run", "fixture:dev"],
-    "url": "http://127.0.0.1:${PORT}",
-    "server_timeout_ms": 45000
-  }
-}
-```
-
-Commands are argument arrays, not shell strings. Templates include `${RUN_ID}`,
-`${RUN_DIR}`, `${ROOT}`, `${BRANCH}`, `${PORT}`, and `${URL}`. Fixtures receive
-the corresponding Heimdal run and artifact environment. Use named signals
-instead of sleeps and publish only small, non-secret metadata:
-
-```bash
-heimdal signal send fixture.ready
-heimdal signal wait fixture.ready --run latest --timeout 2m
-heimdal metadata publish fixture.diagnostics --file ./metadata.json
-heimdal metadata get fixture.diagnostics --run latest --json
-```
-
-For test-produced measurements or decision evidence, emit bounded named JSON
-as `HEIMDAL_EVIDENCE <name> <json>` or attach `application/json` through
-Playwright. Read the structured `evidence` object from the run/report instead
-of scraping stdout. Never publish secrets as evidence.
+Use `session start --url URL` for an existing app. Otherwise let the
+repository's `.heimdal.json` define argument-array commands and templated
+run/worktree paths. Coordinate fixtures with `heimdal signal send/wait`, never
+sleeps or artifact files. Publish only bounded non-secret metadata/evidence;
+read it through Heimdal rather than scraping stdout.
 
 ## Invariants
 
-- Read the target repository's `AGENTS.md` and owning QA docs first.
-- Drive real controls and assert user-visible outcomes; do not manufacture
-  state through private APIs, databases, hooks, or reducer calls.
-- Prefer one focused flow; do not hide failures with retries or arbitrary
-  waits.
-- Preserve failure evidence and stop sessions when finished.
-- Keep every run and session in its originating Git worktree.
+- Honor the active target-repository instructions and read its owning QA docs.
+- Drive real controls and assert user-visible plus subscribed/canonical
+  outcomes; never manufacture state through private APIs, databases, hooks, or
+  reducers.
+- Keep one focused flow; do not hide failures with retries or sleeps.
+- Never put secrets in commands, screenshots, traces, metadata, evidence, or
+  generated tests.
+- Preserve failure evidence, stop sessions, and keep every run/session in its
+  originating worktree.

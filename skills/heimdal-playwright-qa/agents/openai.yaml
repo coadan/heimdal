@@ -1,4 +1,4 @@
 interface:
-display_name: "Heimdal Playwright QA"
-short_description: "Explore and test Playwright apps from worktrees"
-default_prompt: "Use $heimdal-playwright-qa to explore with a persistent Heimdal session, diagnose with evidence, and codify verified flows as Playwright tests."
+  display_name: "Heimdal Playwright QA"
+  short_description: "Explore and test Playwright apps from worktrees"
+  default_prompt: "Use $heimdal-playwright-qa to explore with a persistent Heimdal session, diagnose with evidence, and codify verified flows as Playwright tests."
