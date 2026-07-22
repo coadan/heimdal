@@ -62,7 +62,7 @@ func TestSessionGraduationRequiresPortableAssertion(t *testing.T) {
 		{Args: []string{"click", "e9"}},
 		{Args: []string{"run-code", "async page => {}"}},
 	})
-	if unsafe.Ready || unsafe.Assertions != 0 || unsafe.CoordinateActions != 1 || unsafe.StaleReferences != 1 || unsafe.Unsupported < 2 || len(unsafe.Issues) < 4 {
+	if unsafe.Ready || unsafe.Assertions != 0 || unsafe.CoordinateActions != 1 || unsafe.StaleReferences != 1 || unsafe.Unsupported < 1 || len(unsafe.Issues) < 4 {
 		t.Fatalf("unsafe graduation = %#v", unsafe)
 	}
 }

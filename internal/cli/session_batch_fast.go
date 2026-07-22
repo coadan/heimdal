@@ -169,7 +169,7 @@ func translateSessionBatchFastStep(index int, step sessionBatchStep, retainedSna
 		}
 		planned.Code = "await page.goForward();"
 	case "mouse":
-		if len(step.Args) != 3 || step.Args[0] != "click" {
+		if len(step.Args) != 3 || (step.Args[0] != "click" && step.Args[0] != "move") {
 			return sessionBatchFastStep{}, false
 		}
 		x, errX := strconv.ParseFloat(step.Args[1], 64)
@@ -177,7 +177,7 @@ func translateSessionBatchFastStep(index int, step sessionBatchStep, retainedSna
 		if errX != nil || errY != nil || math.IsNaN(x) || math.IsNaN(y) || math.IsInf(x, 0) || math.IsInf(y, 0) {
 			return sessionBatchFastStep{}, false
 		}
-		planned.Code = fmt.Sprintf("await page.mouse.click(%s, %s);", step.Args[1], step.Args[2])
+		planned.Code = fmt.Sprintf("await page.mouse.%s(%s, %s);", step.Args[0], step.Args[1], step.Args[2])
 	case "wait":
 		if !safeSessionBatchWaitArgs(step.Args) {
 			return sessionBatchFastStep{}, false

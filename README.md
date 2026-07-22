@@ -209,8 +209,8 @@ input value and records a portable assertion for `session save --test`.
 
 Heimdal also keeps common interaction shapes stable across Playwright CLI
 versions: targeted `press` and `type`, `fill --submit`, `click --force`, and
-`mouse click X Y` are canonical forms. Invalid shapes return a bounded
-correction instead of embedding the upstream help page.
+`mouse click X Y` or `mouse move X Y` are canonical forms. Invalid shapes
+return a bounded correction instead of embedding the upstream help page.
 
 Mark important states and inspect a long exploration without reconstructing
 hundreds of action files:
@@ -257,13 +257,16 @@ element instead of calculating viewport pixels:
 
 ```bash
 heimdal session click --within e42 --at 62%,35%
+heimdal session pointer move --within e42 --at 62%,35%
 heimdal session pointer drag --within e42 --from 20%,50% --to 80%,50%
 ```
 
 Heimdal resolves the retained semantic ref once, then Playwright reads its
 bounding box and performs the pointer action. Saved tests retain the same
 bounding-box calculation, so the interaction survives viewport and layout
-changes better than an absolute `mouse click X Y` sequence.
+changes better than an absolute coordinate sequence. Use `pointer move` for a
+hover target; reserve `mouse move X Y` for canvas regions without a stable
+element target.
 
 Sessions are headless by default, which suits unattended agents. Add
 `--headed` to `session start` when you want a visible, inspectable browser:

@@ -521,7 +521,7 @@ func sessionActionCategory(args []string) string {
 	switch args[0] {
 	case "open", "goto", "reload", "go-back", "go-forward", "tab-new", "tab-close", "tab-select":
 		return "navigation"
-	case "click", "dblclick", "fill", "type", "press", "select", "check", "uncheck", "hover", "drag", "mouse":
+	case "click", "dblclick", "fill", "type", "press", "select", "check", "uncheck", "hover", "drag", "mouse", "pointer":
 		return "interaction"
 	case "wait":
 		return "wait"

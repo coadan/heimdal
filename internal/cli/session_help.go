@@ -172,16 +172,18 @@ Usage:
   heimdal session type TEXT [--name NAME] [--json]
   heimdal session type TARGET TEXT [--name NAME] [--json]
 `,
-	"mouse": `Perform a stable absolute coordinate click through Playwright
+	"mouse": `Perform a stable absolute coordinate click or move through Playwright
 
 Usage:
   heimdal session mouse click X Y [--name NAME] [--json]
+  heimdal session mouse move X Y [--name NAME] [--json]
 
-Prefer click --within for layout-resilient spatial interaction.
+Prefer pointer move --within for layout-resilient spatial interaction.
 `,
-	"pointer": `Drag between element-relative points through Playwright
+	"pointer": `Move or drag between element-relative points through Playwright
 
 Usage:
+  heimdal session pointer move --within TARGET --at X%,Y% [--name NAME] [--json]
   heimdal session pointer drag --within TARGET --from X%,Y% --to X%,Y% [--name NAME] [--json]
 `,
 }

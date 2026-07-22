@@ -23,7 +23,7 @@ func auditSessionGraduation(actions []SessionActionRecord) SessionGraduation {
 		if action.Args[0] == "expect" {
 			audit.Assertions++
 		}
-		if action.Args[0] == "mouse" || action.Args[0] == "drag" {
+		if action.Args[0] == "mouse" || action.Args[0] == "drag" || action.Args[0] == "pointer" {
 			audit.CoordinateActions++
 		}
 		if len(action.Args) > 1 && strings.HasPrefix(action.Args[1], "e") && action.Locator == "" && action.Args[0] != "expect" {

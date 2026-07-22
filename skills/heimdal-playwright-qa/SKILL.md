@@ -110,11 +110,15 @@ coordinates instead of viewport arithmetic or raw mouse sequences:
 
 ```bash
 heimdal session click --within e42 --at 62%,35%
+heimdal session pointer move --within e42 --at 62%,35%
 heimdal session pointer drag --within e42 --from 20%,50% --to 80%,50%
 ```
 
 These actions remain Playwright bounding-box operations and graduate into
 viewport-resilient test code.
+
+Use `pointer move --within` to reveal a hover state without pressing. Reserve
+`mouse move X Y` for a canvas region without a stable semantic target.
 
 For asynchronous UI, issue one semantic wait instead of repeatedly observing
 or sleeping. A role is the page's accessibility role (`button`, `link`,
@@ -145,8 +149,9 @@ heimdal session expect --target e12 --value "ready"
 
 On `wait`, `--name` is the accessible name; use `--session NAME` to select a
 named browser. Canonical targeted forms include `press TARGET KEY`, `type TARGET
-TEXT`, `fill TARGET TEXT --submit`, `click TARGET --force`, and `mouse click X
-Y`. Follow Heimdal's structured correction when a command shape is invalid.
+TEXT`, `fill TARGET TEXT --submit`, `click TARGET --force`, `mouse click X Y`,
+and `mouse move X Y`. Follow Heimdal's structured correction when a command
+shape is invalid.
 
 Checkpoint meaningful states in long explorations and use the synthesized
 timeline before reading individual action logs:

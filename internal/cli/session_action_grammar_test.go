@@ -15,11 +15,16 @@ func TestStableActionGrammarNormalizesCoordinateClickAndValidatesShapes(t *testi
 	if err != nil || locator != "" || correction != "" || len(runtime) != 2 || runtime[0] != "run-code" || !strings.Contains(runtime[1], "page.mouse.click(12.5, 40)") {
 		t.Fatalf("mouse plan = %v, %q, %q, %v", runtime, locator, correction, err)
 	}
+	runtime, locator, correction, err = planStableSessionAction(context.Background(), Project{}, &state, "", "mouse", []string{"mouse", "move", "12.5", "40"})
+	if err != nil || locator != "" || correction != "" || len(runtime) != 2 || runtime[0] != "run-code" || !strings.Contains(runtime[1], "page.mouse.move(12.5, 40)") {
+		t.Fatalf("mouse move plan = %v, %q, %q, %v", runtime, locator, correction, err)
+	}
 	for _, input := range []struct {
 		action string
 		args   []string
 	}{
 		{"mouse", []string{"mouse", "click", "left", "20"}},
+		{"mouse", []string{"mouse", "move", "NaN", "20"}},
 		{"fill", []string{"fill", "e1"}},
 		{"press", []string{"press"}},
 		{"click", []string{"click", "e1", "--force", "extra"}},
@@ -118,11 +123,21 @@ func TestStableActionGrammarUsesElementRelativePointerCoordinates(t *testing.T) 
 	if err != nil || correction != "" || !strings.Contains(strings.Join(runtime, " "), "page.mouse.down") || !strings.Contains(strings.Join(runtime, " "), "box.width * 0.9") {
 		t.Fatalf("relative drag plan = %v, %q, %q, %v", runtime, locator, correction, err)
 	}
+	moveArgs := []string{"pointer", "move", "--within", "e2", "--at", "62%,35%"}
+	runtime, locator, correction, err = planStableSessionAction(context.Background(), project, &state, "", "pointer", moveArgs)
+	if err != nil || correction != "" || !strings.Contains(strings.Join(runtime, " "), "page.mouse.move") || !strings.Contains(strings.Join(runtime, " "), "box.width * 0.62") {
+		t.Fatalf("relative move plan = %v, %q, %q, %v", runtime, locator, correction, err)
+	}
 
 	lines := sessionActionTestLines(SessionActionRecord{Args: dragArgs, Locator: locator})
 	generated := strings.Join(lines, "\n")
 	if !strings.Contains(generated, "boundingBox") || !strings.Contains(generated, "page.mouse.up") {
 		t.Fatalf("relative drag test lines:\n%s", generated)
+	}
+	lines = sessionActionTestLines(SessionActionRecord{Args: moveArgs, Locator: locator})
+	generated = strings.Join(lines, "\n")
+	if !strings.Contains(generated, "boundingBox") || !strings.Contains(generated, "page.mouse.move") || strings.Contains(generated, "page.mouse.down") {
+		t.Fatalf("relative move test lines:\n%s", generated)
 	}
 	for _, invalid := range []string{"62,35", "-1%,20%", "101%,20%"} {
 		if _, _, err := parseRelativePoint(invalid); err == nil {

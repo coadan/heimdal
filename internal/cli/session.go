@@ -285,8 +285,9 @@ Stable action forms:
   fill TARGET TEXT [--submit]
   click TARGET [left|right|middle|--force]
   click --within TARGET --at X%,Y%
+  pointer move --within TARGET --at X%,Y%
   pointer drag --within TARGET --from X%,Y% --to X%,Y%
-  mouse click X Y
+  mouse click X Y | mouse move X Y
 
 Expect options:
   --role ROLE      Assert an accessibility role, optionally narrowed by --name
@@ -341,6 +342,7 @@ Examples:
   heimdal session click e12
   heimdal session fill e5 "hello"
   heimdal session click --within e42 --at 62%,35%
+  heimdal session pointer move --within e42 --at 62%,35%
   heimdal session pointer drag --within e42 --from 20%,50% --to 80%,50%
   heimdal session wait --role button --name "Continue" --state enabled --timeout 30s
   heimdal session wait --change --settle 300ms
@@ -1911,7 +1913,15 @@ func sessionActionTestLines(action SessionActionRecord) []string {
 		return []string{fmt.Sprintf("await page.setViewportSize({ width: %s, height: %s });", action.Args[1], action.Args[2])}
 	case "expect":
 		return expectationTestLines(action)
+	case "mouse":
+		if len(action.Args) == 4 && (action.Args[1] == "click" || action.Args[1] == "move") {
+			return []string{fmt.Sprintf("await page.mouse.%s(%s, %s);", action.Args[1], action.Args[2], action.Args[3])}
+		}
+		return []string{"// TODO: replace malformed recorded mouse action"}
 	case "pointer":
+		if len(action.Args) == 6 && action.Args[1] == "move" && action.Args[2] == "--within" && action.Args[4] == "--at" {
+			return relativePointerMoveTestLines(locator, action.Args[5])
+		}
 		if len(action.Args) == 8 && action.Args[1] == "drag" && action.Args[2] == "--within" && action.Args[4] == "--from" && action.Args[6] == "--to" {
 			return relativePointerTestLines(locator, action.Args[5], action.Args[7])
 		}
@@ -1977,6 +1987,9 @@ func sessionActionTarget(action string, args []string) string {
 	}
 	if action == "click" && len(args) == 5 && args[1] == "--within" {
 		return args[2]
+	}
+	if action == "pointer" && len(args) == 6 && args[1] == "move" && args[2] == "--within" {
+		return args[3]
 	}
 	if action == "pointer" && len(args) == 8 && args[1] == "drag" && args[2] == "--within" {
 		return args[3]

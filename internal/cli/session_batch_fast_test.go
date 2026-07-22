@@ -222,6 +222,7 @@ func TestSessionBatchFastTranslationCoversKnownSafeActions(t *testing.T) {
 		{Command: "uncheck", Args: []string{"e4"}},
 		{Command: "hover", Args: []string{"e3"}},
 		{Command: "mouse", Args: []string{"click", "12.5", "40"}},
+		{Command: "mouse", Args: []string{"move", "12.5", "40"}},
 		{Command: "wait", Args: []string{"--role", "button", "--name", "Save", "--state", "enabled", "--timeout", "2s"}},
 		{Command: "expect", Args: []string{"--role", "button", "--name", "Save", "--state", "visible"}},
 		{Command: "expect", Args: []string{"--text", "Saved", "--state", "visible"}},

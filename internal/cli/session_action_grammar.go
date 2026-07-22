@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -69,20 +70,28 @@ func planStableSessionAction(ctx context.Context, project Project, state *Sessio
 		}
 		return nil, "", sessionActionCorrection(action), errors.New("fill accepts TARGET TEXT and optional --submit")
 	case "mouse":
-		if len(args) != 3 || args[0] != "click" {
-			return nil, "", sessionActionCorrection(action), errors.New("mouse accepts click X Y")
+		if len(args) != 3 || (args[0] != "click" && args[0] != "move") {
+			return nil, "", sessionActionCorrection(action), errors.New("mouse accepts click X Y or move X Y")
 		}
-		if _, err := strconv.ParseFloat(args[1], 64); err != nil {
-			return nil, "", sessionActionCorrection(action), fmt.Errorf("mouse X coordinate must be numeric (got %q)", args[1])
+		if _, _, err := parseAbsolutePoint(args[1], args[2]); err != nil {
+			return nil, "", sessionActionCorrection(action), err
 		}
-		if _, err := strconv.ParseFloat(args[2], 64); err != nil {
-			return nil, "", sessionActionCorrection(action), fmt.Errorf("mouse Y coordinate must be numeric (got %q)", args[2])
-		}
-		code := fmt.Sprintf("async page => { await page.mouse.click(%s, %s); }", args[1], args[2])
+		code := fmt.Sprintf("async page => { await page.mouse.%s(%s, %s); }", args[0], args[1], args[2])
 		return []string{"run-code", code}, "", "", nil
 	case "pointer":
+		if len(args) == 5 && args[0] == "move" && args[1] == "--within" && args[3] == "--at" {
+			x, y, err := parseRelativePoint(args[4])
+			if err != nil {
+				return nil, "", sessionActionCorrection(action), err
+			}
+			locator, err := resolveSessionLocator(ctx, project, state, statePath, args[2])
+			if err != nil {
+				return nil, "", sessionActionCorrection(action), err
+			}
+			return []string{"run-code", relativePointerMoveCode(locator, x, y)}, locator, "", nil
+		}
 		if len(args) != 7 || args[0] != "drag" || args[1] != "--within" || args[3] != "--from" || args[5] != "--to" {
-			return nil, "", sessionActionCorrection(action), errors.New("pointer accepts drag --within TARGET --from X%,Y% --to X%,Y%")
+			return nil, "", sessionActionCorrection(action), errors.New("pointer accepts move --within TARGET --at X%,Y% or drag --within TARGET --from X%,Y% --to X%,Y%")
 		}
 		fromX, fromY, err := parseRelativePoint(args[4])
 		if err != nil {
@@ -101,6 +110,18 @@ func planStableSessionAction(ctx context.Context, project Project, state *Sessio
 	default:
 		return logicalArgs, "", "", nil
 	}
+}
+
+func parseAbsolutePoint(xText, yText string) (float64, float64, error) {
+	x, err := strconv.ParseFloat(xText, 64)
+	if err != nil || math.IsNaN(x) || math.IsInf(x, 0) {
+		return 0, 0, fmt.Errorf("mouse X coordinate must be finite and numeric (got %q)", xText)
+	}
+	y, err := strconv.ParseFloat(yText, 64)
+	if err != nil || math.IsNaN(y) || math.IsInf(y, 0) {
+		return 0, 0, fmt.Errorf("mouse Y coordinate must be finite and numeric (got %q)", yText)
+	}
+	return x, y, nil
 }
 
 func parseRelativePoint(value string) (float64, float64, error) {
@@ -143,6 +164,15 @@ func relativePointerCode(locator string, x, y float64, to *[2]float64) string {
 }`, strconv.FormatFloat(to[0], 'f', -1, 64), strconv.FormatFloat(to[1], 'f', -1, 64))
 }
 
+func relativePointerMoveCode(locator string, x, y float64) string {
+	return fmt.Sprintf(`async page => {
+  const target = %s;
+  const box = await target.boundingBox();
+  if (!box) throw new Error('Target has no visible bounding box');
+  await page.mouse.move(box.x + box.width * %s, box.y + box.height * %s);
+}`, locator, strconv.FormatFloat(x, 'f', -1, 64), strconv.FormatFloat(y, 'f', -1, 64))
+}
+
 func relativePointerTestLines(locator, from, to string) []string {
 	if locator == "" {
 		return []string{"// TODO: replace the recorded element ref with a semantic locator"}
@@ -173,6 +203,24 @@ func relativePointerTestLines(locator, from, to string) []string {
 		"}",
 	)
 	return lines
+}
+
+func relativePointerMoveTestLines(locator, at string) []string {
+	if locator == "" {
+		return []string{"// TODO: replace the recorded element ref with a semantic locator"}
+	}
+	x, y, err := parseRelativePoint(at)
+	if err != nil {
+		return []string{"// TODO: replace malformed recorded relative pointer coordinates"}
+	}
+	return []string{
+		"{",
+		"  const target = " + locator + ";",
+		"  const box = await target.boundingBox();",
+		"  if (!box) throw new Error('Target has no visible bounding box');",
+		fmt.Sprintf("  await page.mouse.move(box.x + box.width * %s, box.y + box.height * %s);", strconv.FormatFloat(x, 'f', -1, 64), strconv.FormatFloat(y, 'f', -1, 64)),
+		"}",
+	}
 }
 
 func resolveSessionLocator(ctx context.Context, project Project, state *SessionState, statePath, target string) (string, error) {
@@ -322,9 +370,9 @@ func sessionActionCorrection(action string) string {
 	case "click":
 		return "use `heimdal session click <target> [left|right|middle|--force]` or `click --within <target> --at <x%,y%>`"
 	case "mouse":
-		return "use `heimdal session mouse click <x> <y>`"
+		return "use `heimdal session mouse click <x> <y>` or `mouse move <x> <y>`"
 	case "pointer":
-		return "use `heimdal session pointer drag --within <target> --from <x%,y%> --to <x%,y%>`"
+		return "use `heimdal session pointer move --within <target> --at <x%,y%>` or `pointer drag --within <target> --from <x%,y%> --to <x%,y%>`"
 	case "wait":
 		return "use `heimdal session wait --role <role> [--name <name>]`, `--text <text>`, or `--change`"
 	case "expect":
