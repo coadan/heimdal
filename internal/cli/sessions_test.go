@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -127,6 +128,17 @@ func TestRunSessionsListReturnsStructuredStatuses(t *testing.T) {
 	}
 	if result.Status != "passed" || result.Matched != 0 || result.Returned != 0 || result.Sessions == nil {
 		t.Fatalf("empty inventory = %#v", result)
+	}
+}
+
+func TestSessionInventoryDefaultsToTwentyNewestRows(t *testing.T) {
+	result := SessionsResult{Matched: 25}
+	for index := 0; index < 25; index++ {
+		result.Sessions = append(result.Sessions, SessionInventoryItem{Name: fmt.Sprintf("session-%02d", index)})
+	}
+	limitSessionInventory(&result, 0, false)
+	if result.Returned != 20 || result.Omitted != 5 || len(result.Sessions) != 20 {
+		t.Fatalf("default inventory limit = %#v", result)
 	}
 }
 

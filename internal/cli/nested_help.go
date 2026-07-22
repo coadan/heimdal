@@ -9,7 +9,8 @@ Usage:
   heimdal sessions list [--dir PATH] [--status active|stopped|stale|unknown|broken] [--limit N] [--json]
 
 Each worktree's Playwright workspace is probed so dead browsers and owned app
-processes are reported as stale instead of active.
+processes are reported as stale instead of active. The newest 20 matches are
+returned by default; filter or raise --limit when older rows are needed.
 `,
 	"sessions prune": `Finalize stale session state without discarding evidence
 

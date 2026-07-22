@@ -12,6 +12,8 @@ import (
 	"time"
 )
 
+const defaultSessionInventoryLimit = 20
+
 const sessionsUsage = `Discover and clean up persistent Heimdal sessions
 
 Usage:
@@ -280,7 +282,7 @@ func limitSessionInventory(result *SessionsResult, limit int, candidatesOnly boo
 		result.Sessions = filtered
 	}
 	if limit == 0 {
-		limit = 50
+		limit = defaultSessionInventoryLimit
 	}
 	result.Returned = len(result.Sessions)
 	if len(result.Sessions) > limit {
