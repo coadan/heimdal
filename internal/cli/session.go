@@ -691,7 +691,7 @@ func executeSessionActionPlan(ctx context.Context, project Project, state *Sessi
 	}
 	if action == "snapshot" && !options.Verbose {
 		var snapshotErr error
-		view, snapshotErr = storeSessionSnapshot(state, statePath, result.Sequence, result.Stdout, false, options.Full, "", false)
+		view, snapshotErr = storeSessionSnapshot(state, statePath, result.Sequence, result.Stdout, !options.Full && !options.Boxes, options.Full, "", false)
 		if snapshotErr != nil && commandErr == nil {
 			commandErr = snapshotErr
 		}

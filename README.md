@@ -156,6 +156,9 @@ heimdal session save --name qa --test tests/browser/exploration.spec.ts
 heimdal session stop --name qa
 ```
 
+`session observe` returns semantic changes since the preceding session command;
+use `--full` only when the entire current tree is needed.
+
 `session diagnose` groups recurring console and request failures into bounded
 signatures and returns a delta when the semantic page state is unchanged. On a
 final inspection, add `--stop` to collect the packet and close a non-group

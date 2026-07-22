@@ -36,10 +36,12 @@ Usage:
 Usage:
   heimdal session status [--dir PATH] [--name NAME] [--json|--json=full]
 `,
-	"observe": `Return a bounded Playwright semantic snapshot with current refs
+	"observe": `Return semantic changes since the last session command with current refs
 
 Usage:
   heimdal session observe [--name NAME] [--boxes] [--full] [--json] [-- PLAYWRIGHT_OPTIONS...]
+
+Use --full for the entire current semantic tree and --boxes for layout geometry.
 `,
 	"screenshot": `Capture a page or target screenshot through Playwright
 

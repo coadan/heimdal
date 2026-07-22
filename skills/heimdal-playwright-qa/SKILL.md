@@ -36,11 +36,11 @@ the group once.
 
 ## Interact without polling
 
-- Start/actions return accessibility snapshots or semantic deltas with fresh
-  refs. Use them; do not immediately `observe` again.
+- Start/actions return snapshots or semantic deltas with fresh refs. Use them;
+  do not immediately `observe` again. Observe also returns a delta by default;
+  add `--full` only when the entire current tree is needed.
 - Prefer current refs and role/name/text locators over CSS, XPath, or viewport
-  coordinates. Use `--full` only for the full tree and `--boxes` only for
-  layout/coordinate work.
+  coordinates. Use `--boxes` only for layout/coordinate work.
 - Use `session wait` instead of repeated observe/find calls or sleeps:
   `wait --role button --name Continue --state enabled --timeout 30s`,
   `wait --text <text>`, or `wait --change [--settle 300ms]`.

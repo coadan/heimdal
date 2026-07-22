@@ -571,7 +571,7 @@ func TestStartSessionUsesPersistentAgentCLIState(t *testing.T) {
 	}
 	runner := filepath.Join(root, "fake-playwright-cli")
 	calls := filepath.Join(root, "runner-calls.log")
-	runnerScript := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '" + calls + "'\ncase \"$*\" in\n  *click*) printf '%s\\n' '### Ran Playwright code' '```js' 'await page.getByRole(\"button\").click();' '```' '### Snapshot' '- [Snapshot](" + filepath.ToSlash(snapshotRelative) + ")' ;;\n  *) printf '%s\\n' '- [Snapshot](" + filepath.ToSlash(snapshotRelative) + ")' ;;\nesac\n"
+	runnerScript := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '" + calls + "'\ncase \"$*\" in\n  *click*) printf '%s\\n' '### Ran Playwright code' '```js' 'await page.getByRole(\"button\").click();' '```' '### Snapshot' '- [Snapshot](" + filepath.ToSlash(snapshotRelative) + ")' ;;\n  *snapshot*) printf '%s\\n' '- button \"Save\" [ref=e2]' ;;\n  *) printf '%s\\n' '- [Snapshot](" + filepath.ToSlash(snapshotRelative) + ")' ;;\nesac\n"
 	if err := os.WriteFile(runner, []byte(runnerScript), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -624,6 +624,18 @@ func TestStartSessionUsesPersistentAgentCLIState(t *testing.T) {
 	}
 	if strings.Contains(string(invocations), "generate-locator") {
 		t.Fatalf("single-pass action invoked generate-locator:\n%s", invocations)
+	}
+	observed := executeSessionAction(context.Background(), project, &state, statePath, "snapshot", SessionOptions{})
+	if observed.SnapshotMode != "delta" || observed.Snapshot != "No semantic changes." {
+		t.Fatalf("repeated observation did not return a delta: %#v", observed)
+	}
+	expanded := executeSessionAction(context.Background(), project, &state, statePath, "snapshot", SessionOptions{Full: true})
+	if expanded.SnapshotMode != "full" || !strings.Contains(expanded.Snapshot, `button "Save"`) {
+		t.Fatalf("full observation did not return the current tree: %#v", expanded)
+	}
+	boxed := executeSessionAction(context.Background(), project, &state, statePath, "snapshot", SessionOptions{Boxes: true})
+	if boxed.SnapshotMode != "full" {
+		t.Fatalf("boxed observation returned a delta: %#v", boxed)
 	}
 }
 
