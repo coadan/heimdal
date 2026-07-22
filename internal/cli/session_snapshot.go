@@ -83,7 +83,7 @@ func expandedSemanticSnapshot(snapshot string) snapshotPresentation {
 
 func semanticSnapshotNodes(nodes []snapshotTreeNode, expanded bool) snapshotPresentation {
 	selected := selectSnapshotNodes(nodes, nil, expanded)
-	text, omitted := renderSnapshotSelection(nodes, selected)
+	text, omitted := renderSnapshotSelection(nodes, selected, nil)
 	return snapshotPresentation{Text: text, Mode: "full", Omitted: omitted}
 }
 
@@ -157,10 +157,9 @@ func semanticSnapshotDelta(previous, current, target string, refreshInteractive 
 		}
 	}
 	sort.Strings(removed)
-	if actualChanged == 0 && len(removed) == 0 {
-		markSnapshotStructuralChanges(previousNodes, currentNodes, markChanged)
-		actualChanged = changedCount
-	}
+	beforeStructural := changedCount
+	markSnapshotStructuralChanges(previousNodes, currentNodes, actualChanged == 0 && len(removed) == 0, markChanged)
+	actualChanged += changedCount - beforeStructural
 	meaningful := 0
 	for _, node := range currentNodes {
 		if node.Meaningful {
@@ -182,7 +181,7 @@ func semanticSnapshotDelta(previous, current, target string, refreshInteractive 
 	}
 
 	selected := selectSnapshotNodes(currentNodes, changed, false)
-	text, omitted := renderSnapshotSelection(currentNodes, selected)
+	text, omitted := renderSnapshotSelection(currentNodes, selected, changed)
 	var output strings.Builder
 	if text != "" {
 		if refreshInteractive {
@@ -222,7 +221,7 @@ type snapshotStructurePosition struct {
 	Parent string
 }
 
-func markSnapshotStructuralChanges(previous, current []snapshotTreeNode, mark func(int)) {
+func markSnapshotStructuralChanges(previous, current []snapshotTreeNode, detectReorder bool, mark func(int)) {
 	previousCounts := make(map[string]int)
 	currentCounts := make(map[string]int)
 	for _, node := range previous {
@@ -251,7 +250,7 @@ func markSnapshotStructuralChanges(previous, current []snapshotTreeNode, mark fu
 		if !node.Meaningful {
 			continue
 		}
-		if position, ok := positions[node.Normalized]; ok && (position.Index != meaningfulIndex || position.Parent != snapshotSemanticParent(current, index)) {
+		if position, ok := positions[node.Normalized]; ok && ((detectReorder && position.Index != meaningfulIndex) || position.Parent != snapshotSemanticParent(current, index)) {
 			mark(index)
 		}
 		meaningfulIndex++
@@ -431,7 +430,7 @@ func selectSnapshotNodes(nodes []snapshotTreeNode, candidates []bool, expanded b
 	return selected
 }
 
-func renderSnapshotSelection(nodes []snapshotTreeNode, selected []bool) (string, int) {
+func renderSnapshotSelection(nodes []snapshotTreeNode, selected, candidates []bool) (string, int) {
 	var output strings.Builder
 	selectedMeaningful := 0
 	meaningful := 0
@@ -443,7 +442,8 @@ func renderSnapshotSelection(nodes []snapshotTreeNode, selected []bool) (string,
 	}
 	childDepth := make([]int, len(nodes))
 	for index, node := range nodes {
-		if node.Meaningful {
+		candidate := candidates == nil || candidates[index]
+		if node.Meaningful && candidate {
 			meaningful++
 		}
 		depth := 0
@@ -459,7 +459,7 @@ func renderSnapshotSelection(nodes []snapshotTreeNode, selected []bool) (string,
 			output.WriteString(strings.Repeat("  ", depth))
 			output.WriteString(node.Raw)
 			output.WriteByte('\n')
-			if node.Meaningful {
+			if node.Meaningful && candidate {
 				selectedMeaningful++
 			}
 			depth++

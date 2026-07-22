@@ -72,6 +72,18 @@ func TestSemanticSnapshotDeltaReturnsChangedRefsAndContent(t *testing.T) {
 	}
 }
 
+func TestSemanticSnapshotDeltaDoesNotReportUnchangedNodesAsOmitted(t *testing.T) {
+	previous := largeSnapshotFixture(300)
+	current := strings.Replace(previous, `button "Action 150"`, `button "Action changed"`, 1)
+	view := semanticSnapshotDelta(previous, current, "e151", false)
+	if view.Omitted != 0 || strings.Contains(view.Text, "semantic nodes omitted") {
+		t.Fatalf("delta counted unchanged nodes as omitted: %#v", view)
+	}
+	if !strings.Contains(view.Text, `button "Action changed"`) {
+		t.Fatalf("delta omitted the changed node:\n%s", view.Text)
+	}
+}
+
 func TestSemanticSnapshotNavigationDeltaRefreshesInteractiveRefs(t *testing.T) {
 	previous := snapshotFixture("e", "Save")
 	current := snapshotFixture("f", "Save")
