@@ -649,6 +649,15 @@ func TestInstallSkillMaterializesEmbeddedFiles(t *testing.T) {
 			t.Fatalf("installed skill is missing %s: %v", relative, err)
 		}
 	}
+	skill, err := os.ReadFile(filepath.Join(destination, "SKILL.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{"yield_time_ms: 30000", "empty\n30-second waits", "Never short-poll"} {
+		if !strings.Contains(string(skill), expected) {
+			t.Fatalf("installed skill omitted run wait guidance %q", expected)
+		}
+	}
 	if err := installSkill(destination, false); err == nil {
 		t.Fatal("second install should preserve the existing skill unless forced")
 	}
