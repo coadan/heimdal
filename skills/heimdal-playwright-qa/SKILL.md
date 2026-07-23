@@ -5,24 +5,23 @@ description: Use when an agent needs to explore, diagnose, or regression-test a 
 
 # Heimdal Playwright QA
 
-Run Heimdal from the target worktree. Playwright is the only browser runtime;
-Heimdal owns app/session lifecycle and compact evidence.
+Run Heimdal in the target worktree. Playwright is the only browser runtime;
+Heimdal owns lifecycle and compact evidence.
 
-## Choose one flow
+## Choose one path
 
-**Known behavior:** run the focused repository test.
+Known behavior:
 
 ```bash
 heimdal doctor
 heimdal run -- tests/browser/<flow>.spec.ts --grep <behavior>
 ```
 
-`doctor` status `issues` fails preflight. Only run status `passed` is passing
-evidence; `skipped` is nonzero when Playwright discovers but executes no tests.
-Run the shell with `yield_time_ms: 30000`; continue a yielded process with empty
-30-second waits. Never short-poll or restart the run.
+Only run status `passed` is evidence. `issues` fails doctor; `skipped` means no
+test ran and exits nonzero. Use shell `yield_time_ms: 30000`, then empty
+30-second waits on the same process. Never short-poll or restart.
 
-**Unknown behavior or visual exploration:** use one persistent session.
+Unknown or visual behavior:
 
 ```bash
 heimdal doctor
@@ -31,76 +30,57 @@ heimdal session diagnose --json
 heimdal session stop
 ```
 
-Use `--name` only for concurrent/cross-directory lookup and `--headed` only
-when a person must watch. Use a session group for bounded multi-user flows:
-`session group start --actors host,guest`; target commands with `--actor`; stop
-the group once.
+Use `--name` only for concurrent/cross-directory lookup; `--headed` only for a
+human observer. Multiplayer: `session group start --actors host,guest`, target
+with `--actor`, then stop the group.
 
-## Interact without polling
+## Minimize rounds
 
-- Start/actions return snapshots or semantic deltas with fresh refs. Use them;
-  do not immediately `observe` again. Observe also returns a delta by default;
-  add `--full` only when the entire current tree is needed.
-- Prefer current refs and role/name/text locators over CSS, XPath, or viewport
-  coordinates. Use `--boxes` only for layout/coordinate work.
-- Use `session wait` instead of repeated observe/find calls or sleeps:
-  `wait --role button --name Continue --state enabled --timeout 30s`,
-  `wait --text <text>`, or `wait --change [--settle 300ms]`.
-- Record outcomes with `session expect`; these graduate into Playwright
-  assertions.
-- Use `session measure --viewport 360x800 --json` for layout geometry,
-  overflow, clipping, touch targets, and grid/flex structure. Request
-  screenshots only for visual qualities measurement cannot represent.
-- For canvas/spatial controls, use element-relative `click`, `pointer move`, or
-  `pointer drag` with `--within REF`; reserve raw mouse coordinates for regions
-  without a stable semantic target.
-- Use `--verbose` or forward options after `--` only when compact output omits
-  a needed fact.
+- Use snapshots/deltas returned by start and actions; do not immediately
+  observe again. Add `--full` only for the whole tree.
+- Prefer current refs and role/name/text over CSS, XPath, or coordinates.
+- Wait once instead of observe/find loops or sleeps: `session wait --role
+  button --name Continue --state enabled --timeout 30s`, `--text`, or
+  `--change [--settle 300ms]`.
+- Once known, batch actions with `session batch --json -- ... --then ...`.
+  It stops at first failure and returns step attribution plus fresh refs. Keep
+  `wait --change` outside atomic batches. Check `execution` and
+  `playwright_invocations`.
+- Use `session expect` for outcomes. Named `evidence NAME EXPRESSION` returns
+  bounded, secret-free JSON.
+- Use `session measure --viewport 360x800 --json` for geometry; screenshot only
+  visual qualities it cannot measure. Use `--boxes` only for coordinates.
+- For canvas, use `click` or `pointer move/drag --within REF`; use raw
+  coordinates only without a stable semantic target.
+- Use `--verbose` or forwarded options only when compact output lacks a fact.
 
-## Collapse known interaction rounds
+Use `session checkpoint` for meaningful long-flow states and bounded
+`session timeline --json`/`session report --json` for history.
 
-Once refs and assertions are known, use `session batch --json --` with actions
-joined by `--then`. A batch stops on the first failure, preserves step-level
-attribution, and returns fresh refs. Named `evidence NAME EXPRESSION` must
-return bounded JSON without secrets. Check `execution` and
-`playwright_invocations`; unsupported batches fall back stepwise. Keep
-`wait --change` outside atomic batches so retained-snapshot race detection
-remains active.
-
-Use `session checkpoint` for meaningful long-flow states and
-`session timeline --json` or `session report --json` for bounded history.
-Page with filters/limits; use full JSON only when every entry is required.
-
-## Diagnose summaries first
+## Diagnose
 
 - Interactive: `heimdal session diagnose --json`; add `--screenshot` only for
   visual evidence and `--stop` only for final non-group inspection.
-- Deterministic: `heimdal report --run latest --json`. Trust structured test
-  counts, `failure_source`, classification, fingerprint, caught probes, and
-  bounded trace context before logs or raw artifacts.
-- Use `trace inspect --run latest --around-failure` only when the report is
-  insufficient. Use indexed `runs list/show/compare`, not artifact-directory
-  scans. Run `heimdal gc --dry-run` before manual cleanup.
-- `session save --test PATH --ready` writes and audits a draft. Repair missing
-  assertions, coordinates, stale refs, eval/run-code, or unsupported actions,
-  then run the repository test before calling it regression evidence.
+- Deterministic: `heimdal report --run latest --json`; inspect structured
+  counts, `failure_source`, classification, fingerprint, probes, and bounded
+  trace context before logs. If insufficient, use `trace inspect --run latest
+  --around-failure`. Use `runs list/show/compare`, not artifact scans.
+- `session save --test PATH --ready` audits a draft. Repair its findings and run
+  the repository test before claiming regression evidence.
 
 ## Fixture contract
 
-Use `session start --url URL` for an existing app. Otherwise let the
-repository's `.heimdal.json` define argument-array commands and templated
-run/worktree paths. Coordinate fixtures with `heimdal signal send/wait`, never
-sleeps or artifact files. Publish only bounded non-secret metadata/evidence;
-read it through Heimdal rather than scraping stdout.
+Use `session start --url URL` for an existing app; otherwise use repository
+`.heimdal.json`. Coordinate with `heimdal signal send/wait`, never sleeps or
+artifact files. Publish bounded, non-secret metadata through Heimdal.
 
 ## Invariants
 
-- Honor the active target-repository instructions and read its owning QA docs.
-- Drive real controls and assert user-visible plus subscribed/canonical
-  outcomes; never manufacture state through private APIs, databases, hooks, or
-  reducers.
-- Keep one focused flow; do not hide failures with retries or sleeps.
+- Honor target-repository instructions and read its owning QA docs.
+- Drive real controls; assert visible and subscribed/canonical outcomes. Never
+  manufacture state through private APIs, databases, hooks, or reducers.
+- Keep one focused flow; never hide failure with retries or sleeps.
 - Never put secrets in commands, screenshots, traces, metadata, evidence, or
   generated tests.
-- Preserve failure evidence, stop sessions, and keep every run/session in its
-  originating worktree.
+- Preserve evidence, stop sessions, and keep runs in their originating
+  worktree.

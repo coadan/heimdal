@@ -658,6 +658,9 @@ func TestInstallSkillMaterializesEmbeddedFiles(t *testing.T) {
 			t.Fatalf("installed skill omitted run wait guidance %q", expected)
 		}
 	}
+	if len(skill) > 3_800 {
+		t.Fatalf("installed skill is %d bytes; keep mandatory agent context under 3800 bytes", len(skill))
+	}
 	if err := installSkill(destination, false); err == nil {
 		t.Fatal("second install should preserve the existing skill unless forced")
 	}
