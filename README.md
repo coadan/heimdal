@@ -199,6 +199,24 @@ quiet before the agent continues; all wait phases share one timeout budget.
 For a named browser session, pass `--session NAME` because `wait --name` means
 the accessible name paired with `--role`.
 
+Exercise browser reconnection behavior without restarting the app or reaching
+into its private state:
+
+```bash
+heimdal session reconnect --request /events --json
+heimdal session batch --json -- \
+  reconnect --request /events --then \
+  wait --text "Updated" --timeout 30s
+```
+
+`session reconnect` takes the Playwright browser context offline for 500ms,
+restores it in the same command, and optionally waits for a new request whose
+URL contains `--request`. It works for EventSource and fetch-stream SSE
+clients. Override the disruption with `--offline-for`; matching requests use a
+30-second default `--timeout`. A reconnect plus its visible outcome can use the
+atomic batch path, reducing the interaction to one Playwright code invocation
+and one final semantic snapshot.
+
 Record user-visible outcomes as Playwright-backed assertions while exploring:
 
 ```bash

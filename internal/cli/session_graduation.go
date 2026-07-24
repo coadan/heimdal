@@ -63,7 +63,7 @@ func auditSessionGraduation(actions []SessionActionRecord) SessionGraduation {
 
 func ignoredGraduationAction(command string) bool {
 	switch command {
-	case "open", "snapshot", "screenshot", "measure", "evidence", "console", "requests", "highlight", "find", "tab-list", "request", "request-headers", "request-body", "response-headers", "response-body", "cookie-list", "cookie-get", "localstorage-list", "localstorage-get", "sessionstorage-list", "sessionstorage-get", "checkpoint", "wait":
+	case "open", "snapshot", "screenshot", "measure", "evidence", "console", "requests", "highlight", "find", "tab-list", "request", "request-headers", "request-body", "response-headers", "response-body", "cookie-list", "cookie-get", "localstorage-list", "localstorage-get", "sessionstorage-list", "sessionstorage-get", "checkpoint", "wait", "reconnect":
 		return true
 	default:
 		return false

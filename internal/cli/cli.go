@@ -28,6 +28,7 @@ Usage:
   heimdal session observe [options]
   heimdal session screenshot [options]
   heimdal session diagnose [options]
+  heimdal session reconnect [options]
   heimdal session batch --file FILE|- [options]
   heimdal session save [options]
   heimdal session <PLAYWRIGHT_CLI_COMMAND> [options]

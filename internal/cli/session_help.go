@@ -78,6 +78,16 @@ Usage:
 Use --session NAME to select a named browser. Passing assertions graduate into
 session save --test output.
 `,
+	"reconnect": `Simulate a browser-network disconnect and reconnect through Playwright
+
+Usage:
+  heimdal session reconnect [--request URL_SUBSTRING] [--offline-for AGE] [--timeout AGE] [--session NAME] [--json]
+
+The browser context is taken offline briefly and always restored. With
+--request, the command also requires a new matching request after the network
+returns. This works for EventSource and fetch-stream SSE clients without
+depending on an application's implementation.
+`,
 	"evidence": `Capture bounded named JSON from the current page through Playwright
 
 Usage:

@@ -198,6 +198,8 @@ func runSession(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return runSessionWait(ctx, args[1:], out, errOut)
 	case "expect":
 		return runSessionExpect(ctx, args[1:], out, errOut)
+	case "reconnect":
+		return runSessionReconnect(ctx, args[1:], out, errOut)
 	case "evidence":
 		return runSessionEvidence(ctx, args[1:], out, errOut)
 	case "timeline":
@@ -235,6 +237,7 @@ Usage:
   heimdal session diagnose [options]
   heimdal session wait (--role ROLE [--name NAME] | --text TEXT | --change) [options]
   heimdal session expect (--role ROLE [--name NAME] | --text TEXT | --url URL | --target TARGET --value VALUE) [options]
+  heimdal session reconnect [--request URL_SUBSTRING] [--offline-for AGE] [--timeout AGE] [options]
   heimdal session evidence NAME EXPRESSION [options]
   heimdal session timeline [NAME] [options]
   heimdal session report [NAME] [options]
@@ -299,6 +302,12 @@ Expect options:
   --state STATE    visible, hidden, enabled, disabled, checked, or unchecked
   --timeout AGE    Assertion timeout such as 5s (default: 5s)
 
+Reconnect options:
+  --request TEXT   Require a new request whose URL contains TEXT after reconnect
+  --offline-for AGE
+                   Time to keep the browser context offline (default: 500ms)
+  --timeout AGE    Maximum wait for the matching request (default: 30s)
+
 Evidence arguments:
   NAME             Stable evidence key such as save.state
   EXPRESSION       Page evaluation function that returns bounded JSON
@@ -347,6 +356,7 @@ Examples:
   heimdal session wait --role button --name "Continue" --state enabled --timeout 30s
   heimdal session wait --change --settle 300ms
   heimdal session expect --role button --name "Continue" --state visible
+  heimdal session reconnect --request /events --json
   heimdal session evidence save.state "() => ({ saved: true })" --json
   heimdal session checkpoint "entered checkout"
   heimdal session timeline --json
@@ -1261,6 +1271,11 @@ func runSessionCommandModeArgs(ctx context.Context, project Project, state *Sess
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	err := cmd.Run()
+	if err == nil {
+		if reported := playwrightCLIReportedError(stdout.String(), stderr.String()); reported != "" {
+			err = errors.New(reported)
+		}
+	}
 	finished := time.Now().UTC()
 	exitCode := 0
 	if err != nil {
@@ -1314,6 +1329,26 @@ func runSessionCommandModeArgs(ctx context.Context, project Project, state *Sess
 		err = fmt.Errorf("Playwright CLI exited with code %d", exitCode)
 	}
 	return sessionCommandResult{Args: logicalArgs, Stdout: stdout.String(), Stderr: stderr.String(), ExitCode: exitCode, Sequence: sequence, StartedAt: started, Locator: locator}, err
+}
+
+func playwrightCLIReportedError(stdout, stderr string) string {
+	for _, output := range []string{stdout, stderr} {
+		clean := stripANSI(output)
+		marker := "### Error"
+		index := strings.Index(clean, marker)
+		if index < 0 {
+			continue
+		}
+		detail := strings.TrimSpace(clean[index+len(marker):])
+		if next := strings.Index(detail, "\n### "); next >= 0 {
+			detail = strings.TrimSpace(detail[:next])
+		}
+		if detail == "" {
+			return "Playwright CLI reported an error"
+		}
+		return truncateDisplay(detail, 800)
+	}
+	return ""
 }
 
 func locatorFromPlaywrightAction(output, action string) string {
@@ -1933,7 +1968,7 @@ func sessionActionTestLines(action SessionActionRecord) []string {
 
 func shouldObserveAfterSessionAction(action string) bool {
 	switch action {
-	case "click", "dblclick", "drag", "fill", "select", "check", "uncheck", "hover", "press", "type", "tap", "focus", "goto", "reload", "go-back", "go-forward", "resize", "set-input-files", "wait", "mouse", "pointer":
+	case "click", "dblclick", "drag", "fill", "select", "check", "uncheck", "hover", "press", "type", "tap", "focus", "goto", "reload", "go-back", "go-forward", "resize", "set-input-files", "wait", "reconnect", "mouse", "pointer":
 		return true
 	default:
 		return false

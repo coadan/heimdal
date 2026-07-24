@@ -377,6 +377,8 @@ func sessionActionCorrection(action string) string {
 		return "use `heimdal session wait --role <role> [--name <name>]`, `--text <text>`, or `--change`"
 	case "expect":
 		return "use `heimdal session expect --role <role> [--name <name>]`, `--text <text>`, `--url <url>`, or `--target <ref> --value <value>`"
+	case "reconnect":
+		return "use `heimdal session reconnect [--request <URL substring>] [--offline-for 500ms] [--timeout 30s]`"
 	case "evidence":
 		return "use `heimdal session evidence <name> '<expression returning JSON>'` or include the same step in `heimdal session batch`"
 	default:

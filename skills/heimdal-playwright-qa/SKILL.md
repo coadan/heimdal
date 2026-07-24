@@ -42,6 +42,8 @@ with `--actor`, then stop the group.
 - Wait once instead of observe/find loops or sleeps: `session wait --role
   button --name Continue --state enabled --timeout 30s`, `--text`, or
   `--change [--settle 300ms]`.
+- Test SSE recovery with `session reconnect --request /events --json`; it
+  cycles offline/online and requires a new matching request.
 - Once known, batch actions with `session batch --json -- ... --then ...`.
   It stops at first failure and returns step attribution plus fresh refs. Keep
   `wait --change` outside atomic batches. Check `execution` and

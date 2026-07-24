@@ -214,6 +214,13 @@ func translateSessionBatchFastStep(index int, step sessionBatchStep, retainedSna
 		planned.LogicalArgs = expectLogicalArgs(expectOptions)
 		planned.Locator = locator
 		planned.Code = "await (" + expectPlaywrightCode(expectOptions, locator) + ")(page);"
+	case "reconnect":
+		reconnectOptions, err := parseSessionReconnectOptions(step.Args)
+		if err != nil {
+			return sessionBatchFastStep{}, false
+		}
+		planned.LogicalArgs = reconnectLogicalArgs(reconnectOptions)
+		planned.Code = "await (" + reconnectPlaywrightCode(reconnectOptions) + ")(page);"
 	case "evidence":
 		if len(step.Args) != 2 {
 			return sessionBatchFastStep{}, false

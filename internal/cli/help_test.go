@@ -29,7 +29,7 @@ func TestPlaywrightHelpAfterDelimiterIsNotConsumed(t *testing.T) {
 }
 
 func TestCanonicalSessionCommandsHaveSpecificHelp(t *testing.T) {
-	commands := []string{"start", "stop", "status", "list", "prune", "observe", "screenshot", "diagnose", "wait", "expect", "timeline", "report", "checkpoint", "measure", "batch", "save", "group", "click", "fill", "press", "type", "mouse", "pointer"}
+	commands := []string{"start", "stop", "status", "list", "prune", "observe", "screenshot", "diagnose", "wait", "expect", "reconnect", "timeline", "report", "checkpoint", "measure", "batch", "save", "group", "click", "fill", "press", "type", "mouse", "pointer"}
 	for _, command := range commands {
 		t.Run(command, func(t *testing.T) {
 			usage, ok := commandHelp([]string{"session", command, "--help"})
