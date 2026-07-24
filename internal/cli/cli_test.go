@@ -653,6 +653,9 @@ func TestInstallSkillMaterializesEmbeddedFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !strings.Contains(string(skill), "doctor` once per worktree/config state") {
+		t.Fatal("installed skill should reuse passed doctor readiness")
+	}
 	for _, expected := range []string{"yield_time_ms: 30000", "empty\n30-second waits", "Never short-poll"} {
 		if !strings.Contains(string(skill), expected) {
 			t.Fatalf("installed skill omitted run wait guidance %q", expected)

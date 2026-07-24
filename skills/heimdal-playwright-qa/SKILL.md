@@ -5,26 +5,26 @@ description: Use when an agent needs to explore, diagnose, or regression-test a 
 
 # Heimdal Playwright QA
 
-Run Heimdal in the target worktree. Playwright is the only browser runtime;
-Heimdal owns lifecycle and compact evidence.
+Run in the target worktree. Playwright is the only browser runtime; Heimdal
+owns lifecycle and compact evidence.
+Run `heimdal doctor` once per worktree/config state; repeat only after config or
+dependency drift.
 
 ## Choose one path
 
 Known behavior:
 
 ```bash
-heimdal doctor
 heimdal run -- tests/browser/<flow>.spec.ts --grep <behavior>
 ```
 
-Only run status `passed` is evidence. `issues` fails doctor; `skipped` means no
-test ran and exits nonzero. Use shell `yield_time_ms: 30000`, then empty
+Only `passed` is evidence. Doctor `issues` and run `skipped` fail. Use shell
+`yield_time_ms: 30000`, then empty
 30-second waits on the same process. Never short-poll or restart.
 
 Unknown or visual behavior:
 
 ```bash
-heimdal doctor
 heimdal session start --dir .
 heimdal session diagnose --json
 heimdal session stop
