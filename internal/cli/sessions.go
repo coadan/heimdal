@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-const defaultSessionInventoryLimit = 20
+const defaultSessionInventoryLimit = 8
 
 const sessionsUsage = `Discover and clean up persistent Heimdal sessions
 
@@ -23,6 +23,7 @@ Usage:
 List probes each indexed worktree's Playwright workspace and distinguishes
 active, stopped, stale, unknown, and broken state. Prune finalizes stale state
 and removes stale or broken global indexes while preserving session evidence.
+Lists return 8 matches by default; filter or raise --limit for older rows.
 The singular aliases heimdal session list and heimdal session prune are also
 accepted.
 `

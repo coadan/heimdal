@@ -131,13 +131,13 @@ func TestRunSessionsListReturnsStructuredStatuses(t *testing.T) {
 	}
 }
 
-func TestSessionInventoryDefaultsToTwentyNewestRows(t *testing.T) {
+func TestSessionInventoryDefaultsToEightNewestRows(t *testing.T) {
 	result := SessionsResult{Matched: 25}
 	for index := 0; index < 25; index++ {
 		result.Sessions = append(result.Sessions, SessionInventoryItem{Name: fmt.Sprintf("session-%02d", index)})
 	}
 	limitSessionInventory(&result, 0, false)
-	if result.Returned != 20 || result.Omitted != 5 || len(result.Sessions) != 20 {
+	if result.Returned != 8 || result.Omitted != 17 || len(result.Sessions) != 8 {
 		t.Fatalf("default inventory limit = %#v", result)
 	}
 }

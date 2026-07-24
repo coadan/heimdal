@@ -176,7 +176,7 @@ The inventory probes each indexed worktree's Playwright workspace and reports
 `active`, `stopped`, `stale`, `unknown`, or `broken`. Pruning finalizes stale
 state and removes dead global indexes while preserving session evidence;
 `heimdal gc` performs the same stale-index cleanup. `session list` and `session
-prune` are accepted as singular aliases. Lists return the newest 20 matches by
+prune` are accepted as singular aliases. Lists return the newest 8 matches by
 default; filter or raise `--limit` for older rows. Starting a known-stale session
 name recovers it without requiring `--force`.
 
