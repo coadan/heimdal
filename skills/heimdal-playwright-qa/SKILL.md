@@ -19,8 +19,8 @@ heimdal run -- tests/browser/<flow>.spec.ts --grep <behavior>
 ```
 
 Only `passed` is evidence. Doctor `issues` and run `skipped` fail. Use shell
-`yield_time_ms: 30000`, then empty
-30-second waits on the same process. Never short-poll or restart.
+`yield_time_ms: 30000`, then empty 60-second waits on the same process. Never
+short-poll, run reports while it is active, or restart.
 
 Unknown or visual behavior:
 

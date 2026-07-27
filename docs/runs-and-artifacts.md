@@ -4,6 +4,9 @@ Every deterministic run receives an isolated directory under `.heimdal/` by
 default. It can contain the final result, stdout, stderr, Playwright output,
 reports, screenshots, videos, and traces.
 
+`heimdal run` stays in the foreground until its terminal result. Keep waiting
+on that process; `report` is for a separate observer or post-run diagnosis.
+
 ## Inspect a run
 
 Start with the bounded report:
@@ -73,4 +76,3 @@ heimdal sessions prune --dry-run --json
 Heimdal reports `active`, `stopped`, `stale`, `unknown`, or `broken`. Pruning
 finalizes stale state and removes dead global indexes while retaining session
 evidence.
-

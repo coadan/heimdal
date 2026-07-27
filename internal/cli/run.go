@@ -225,7 +225,7 @@ func executeRun(ctx context.Context, project Project, options RunOptions, out, e
 		}
 		stopProgress := func() {}
 		if options.JSON {
-			stopProgress = startRunProgress(manifest, runDir, errOut, 15*time.Second)
+			stopProgress = startRunProgress(manifest, runDir, errOut, time.Minute)
 		}
 		err = cmd.Wait()
 		stopProgress()
@@ -299,7 +299,7 @@ func executeRun(ctx context.Context, project Project, options RunOptions, out, e
 func startRunProgress(manifest RunManifest, runDir string, out io.Writer, interval time.Duration) func() {
 	done := make(chan struct{})
 	stopped := make(chan struct{})
-	fmt.Fprintf(out, "heimdal: run %s started; poll with `heimdal report --run %s --json`\n", manifest.RunID, manifest.RunID)
+	fmt.Fprintf(out, "heimdal: run %s started; keep waiting on this command\n", manifest.RunID)
 	go func() {
 		defer close(stopped)
 		ticker := time.NewTicker(interval)
