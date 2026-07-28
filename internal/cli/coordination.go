@@ -585,9 +585,6 @@ func resolveCoordinationRun(selection coordinationSelection) (coordinationRun, e
 				return coordinationRun{}, fmt.Errorf("HEIMDAL_RUN_DIR: %w", err)
 			}
 			id := filepath.Base(absolute)
-			if err := validateCoordinationRunSelector(id); err != nil {
-				return coordinationRun{}, fmt.Errorf("HEIMDAL_RUN_DIR does not name a valid run: %w", err)
-			}
 			return coordinationRun{ID: id, Dir: absolute}, nil
 		}
 	}

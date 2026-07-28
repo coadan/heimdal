@@ -69,7 +69,8 @@ func TestCoordinationRejectsConflictingDirectoryAliases(t *testing.T) {
 }
 
 func TestCoordinationUsesEnvironmentRunDirectoryDirectly(t *testing.T) {
-	runDir := filepath.Join(t.TempDir(), "run-from-env")
+	runID := "session-20260728t183655.895038000z-41853"
+	runDir := filepath.Join(t.TempDir(), runID)
 	if err := os.MkdirAll(runDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +84,7 @@ func TestCoordinationUsesEnvironmentRunDirectoryDirectly(t *testing.T) {
 	if err := json.Unmarshal([]byte(output), &response); err != nil {
 		t.Fatalf("signal response was not JSON: %v; output=%s", err, output)
 	}
-	if response.RunID != "run-from-env" || response.Status != "sent" {
+	if response.RunID != runID || response.Status != "sent" {
 		t.Fatalf("unexpected environment-selected run response: %#v", response)
 	}
 	if _, err := os.Stat(filepath.Join(runDir, "signals", "ready")); err != nil {

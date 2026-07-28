@@ -35,8 +35,9 @@ heimdal signal wait fixture.ready --run latest --timeout 2m
 ```
 
 Signals are idempotent. Inside a running fixture, coordination commands can use
-`HEIMDAL_RUN_DIR`; another shell selects a run using `--run` and, when needed,
-`--dir`.
+`HEIMDAL_RUN_DIR`, including an interactive session directory whose generated
+run id contains a fractional timestamp. Another shell selects a deterministic
+run using `--run` and, when needed, `--dir`.
 
 ## Publish test evidence
 
@@ -50,4 +51,3 @@ HEIMDAL_EVIDENCE design.metrics {"iterations":2,"latency_ms":42}
 named `application/json` Playwright attachments reported with their artifact
 path. Names use letters, numbers, dots, dashes, or underscores; payloads are
 limited to 64 KiB.
-
