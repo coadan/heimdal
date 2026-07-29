@@ -113,7 +113,7 @@ func resolveTrace(project Project, runID, tracePath string) (string, *RunResult,
 		return "", nil, err
 	}
 	enrichRunResult(&result)
-	tracePath, err = findTrace(result.Artifacts.RunDir)
+	tracePath, err = findTraceForFailure(result.Artifacts.RunDir, result.PrimaryFailure)
 	if err != nil {
 		return "", nil, err
 	}

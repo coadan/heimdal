@@ -285,6 +285,40 @@ func TestFailedRunReportIncludesTraceDiagnosisWithoutFullFileIndex(t *testing.T)
 	}
 }
 
+func TestTraceDiagnosisSelectsThePrimaryFailedTest(t *testing.T) {
+	runDir := t.TempDir()
+	primary := filepath.Join(
+		runDir,
+		"test-results",
+		"starter-movement-affordanc-3aae1-in-the-standing-action-rail-chromium",
+		"trace.zip",
+	)
+	unrelated := filepath.Join(
+		runDir,
+		"test-results",
+		"websocket-recovery-an-inte-7db5f-without-replacing-the-game-chromium",
+		"trace.zip",
+	)
+	for _, path := range []string{primary, unrelated} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("trace"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := findTraceForFailure(runDir, &PrimaryFailure{
+		Location: "tests/browser/starter-movement-affordance.spec.ts:5:1",
+		Test:     "starter keeps ordinary movement in the standing action rail",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != primary {
+		t.Fatalf("trace = %q, want primary failure trace %q", got, primary)
+	}
+}
+
 func TestVersionCommandsAreCompact(t *testing.T) {
 	for _, command := range []string{"version", "--version"} {
 		var out strings.Builder

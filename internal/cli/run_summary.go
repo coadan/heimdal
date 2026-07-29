@@ -209,7 +209,7 @@ func addRunTraceDiagnosis(result *RunResult, runDir string) {
 	if result.TraceDiagnosis != nil {
 		return
 	}
-	tracePath, err := findTrace(runDir)
+	tracePath, err := findTraceForFailure(runDir, result.PrimaryFailure)
 	if err != nil {
 		return
 	}

@@ -627,6 +627,10 @@ func readRunManifest(path string) (RunManifest, error) {
 }
 
 func findTrace(runDir string) (string, error) {
+	return findTraceForFailure(runDir, nil)
+}
+
+func findTraceForFailure(runDir string, failure *PrimaryFailure) (string, error) {
 	var traces []string
 	_ = filepath.WalkDir(runDir, func(path string, entry os.DirEntry, err error) error {
 		if err != nil || entry.IsDir() {
@@ -641,7 +645,45 @@ func findTrace(runDir string) (string, error) {
 		return "", fmt.Errorf("no Playwright trace found in %s", runDir)
 	}
 	sort.Strings(traces)
-	return traces[len(traces)-1], nil
+	best := traces[len(traces)-1]
+	bestScore := 0
+	terms := failureTraceTerms(failure)
+	for _, trace := range traces {
+		relative, _ := filepath.Rel(runDir, trace)
+		candidate := strings.ToLower(filepath.ToSlash(relative))
+		score := 0
+		for _, term := range terms {
+			if strings.Contains(candidate, term) {
+				score++
+			}
+		}
+		if score > bestScore {
+			best, bestScore = trace, score
+		}
+	}
+	return best, nil
+}
+
+func failureTraceTerms(failure *PrimaryFailure) []string {
+	if failure == nil {
+		return nil
+	}
+	identity := failureLocationFile(failure.Location) + " " + failure.Test
+	seen := map[string]struct{}{}
+	var terms []string
+	for _, term := range strings.FieldsFunc(strings.ToLower(identity), func(char rune) bool {
+		return char < 'a' || char > 'z'
+	}) {
+		if len(term) < 4 || term == "browser" || term == "spec" || term == "test" || term == "tests" {
+			continue
+		}
+		if _, exists := seen[term]; exists {
+			continue
+		}
+		seen[term] = struct{}{}
+		terms = append(terms, term)
+	}
+	return terms
 }
 
 func writeJSON(path string, value any) error {
