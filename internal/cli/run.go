@@ -186,11 +186,12 @@ func executeRun(ctx context.Context, project Project, options RunOptions, out, e
 	cmd.Env = env
 	cmd.Stdout = stdoutWriter
 	cmd.Stderr = stderrWriter
+	configureManagedProcess(cmd)
 	if err = cmd.Start(); err == nil {
 		stopHeartbeat, heartbeatErr := startRunHeartbeat(filepath.Join(runDir, ".heartbeat"))
 		if heartbeatErr != nil {
-			_ = cmd.Process.Kill()
-			_ = cmd.Wait()
+			stopDetachedProcess(cmd.Process.Pid)
+			_ = waitManagedProcess(cmd)
 			return RunResult{}, heartbeatErr
 		}
 		defer stopHeartbeat()
@@ -219,15 +220,15 @@ func executeRun(ctx context.Context, project Project, options RunOptions, out, e
 			},
 		}
 		if manifestErr := writeJSON(filepath.Join(runDir, "run.json"), manifest); manifestErr != nil {
-			_ = cmd.Process.Kill()
-			_ = cmd.Wait()
+			stopDetachedProcess(cmd.Process.Pid)
+			_ = waitManagedProcess(cmd)
 			return RunResult{}, fmt.Errorf("write live run manifest: %w", manifestErr)
 		}
 		stopProgress := func() {}
 		if options.JSON {
 			stopProgress = startRunProgress(manifest, runDir, errOut, time.Minute)
 		}
-		err = cmd.Wait()
+		err = waitManagedProcess(cmd)
 		stopProgress()
 	}
 	finished := time.Now().UTC()

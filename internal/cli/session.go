@@ -68,6 +68,7 @@ type SessionState struct {
 	URL           string               `json:"url,omitempty"`
 	Port          int                  `json:"port,omitempty"`
 	ServerPID     int                  `json:"server_pid,omitempty"`
+	BrowserPID    int                  `json:"browser_pid,omitempty"`
 	ServerCommand []string             `json:"server_command,omitempty"`
 	ServerStdout  string               `json:"server_stdout,omitempty"`
 	ServerStderr  string               `json:"server_stderr,omitempty"`
@@ -496,6 +497,7 @@ func startSession(ctx context.Context, project Project, options SessionOptions, 
 		openArgs = append(openArgs, "--profile="+absoluteFromRoot(project.Root, options.Profile))
 	}
 	open, openErr := runSessionCommandMode(ctx, project, &state, statePath, openArgs, "", !options.Verbose)
+	state.BrowserPID = managedProcessPID("--config=" + state.CLIConfig)
 	if openErr != nil {
 		stopSessionResources(ctx, project, state)
 		markSessionStopped(statePath, &state)
@@ -505,6 +507,11 @@ func startSession(ctx context.Context, project Project, options SessionOptions, 
 			response.Stderr = compactCLIOutput(open.Stderr)
 		}
 		return printSessionResponse(out, errOut, response, options.JSON)
+	}
+	if err := writeSessionState(statePath, state); err != nil {
+		stopSessionResources(ctx, project, state)
+		markSessionStopped(statePath, &state)
+		return reportError(options.JSON, fmt.Errorf("persist session browser owner: %w", err), out, errOut)
 	}
 
 	observe := open
@@ -558,7 +565,7 @@ func runSessionStop(ctx context.Context, args []string, out, errOut io.Writer) i
 		return printSessionResponse(out, errOut, response, options.JSON)
 	}
 	closeResult, closeErr := runSessionCommand(ctx, project, &state, statePath, []string{"close"}, "")
-	stopSessionServer(state.ServerPID)
+	stopSessionOwnedProcesses(state)
 	stopped := time.Now().UTC()
 	state.StoppedAt = &stopped
 	stateWriteErr := writeSessionState(statePath, state)
@@ -821,7 +828,7 @@ func runSessionDiagnose(ctx context.Context, args []string, out, errOut io.Write
 			return printSessionResponse(out, errOut, response, options.JSON)
 		}
 		closeResult, closeErr := runSessionCommand(ctx, project, &state, statePath, []string{"close"}, "")
-		stopSessionServer(state.ServerPID)
+		stopSessionOwnedProcesses(state)
 		stopped := time.Now().UTC()
 		state.StoppedAt = &stopped
 		closeErr = errors.Join(closeErr, writeSessionState(statePath, state), writeSessionIndex(state))
@@ -1524,6 +1531,11 @@ func stopSessionResources(ctx context.Context, project Project, state SessionSta
 		cmd.Env = sessionEnvironment(project, state)
 		_ = cmd.Run()
 	}
+	stopSessionOwnedProcesses(state)
+}
+
+func stopSessionOwnedProcesses(state SessionState) {
+	stopDetachedProcess(state.BrowserPID)
 	stopSessionServer(state.ServerPID)
 }
 

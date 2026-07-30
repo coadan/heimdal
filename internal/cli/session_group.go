@@ -340,7 +340,7 @@ func stopSessionGroupActor(ctx context.Context, project Project, actor SessionGr
 		return nil
 	}
 	_, closeErr := runSessionCommand(ctx, project, &state, actor.StatePath, []string{"close"}, "")
-	stopSessionServer(state.ServerPID)
+	stopSessionOwnedProcesses(state)
 	stopped := time.Now().UTC()
 	state.StoppedAt = &stopped
 	stateErr := writeSessionState(actor.StatePath, state)
