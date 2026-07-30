@@ -33,3 +33,28 @@ func processPIDWithArgument(argument string) int {
 	}
 	return pid
 }
+
+func processTreePIDs(root int) []int {
+	command := `Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId) $($_.ParentProcessId)" }`
+	output, err := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", command).Output()
+	if err != nil {
+		return []int{root}
+	}
+	children := map[int][]int{}
+	for _, line := range strings.Split(string(output), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 2 {
+			continue
+		}
+		pid, pidErr := strconv.Atoi(fields[0])
+		parent, parentErr := strconv.Atoi(fields[1])
+		if pidErr == nil && parentErr == nil {
+			children[parent] = append(children[parent], pid)
+		}
+	}
+	result := []int{root}
+	for index := 0; index < len(result); index++ {
+		result = append(result, children[result[index]]...)
+	}
+	return result
+}

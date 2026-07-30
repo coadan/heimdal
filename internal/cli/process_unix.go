@@ -39,3 +39,27 @@ func processPIDWithArgument(argument string) int {
 	}
 	return 0
 }
+
+func processTreePIDs(root int) []int {
+	output, err := exec.Command("ps", "-axo", "pid=,ppid=").Output()
+	if err != nil {
+		return []int{root}
+	}
+	children := map[int][]int{}
+	for _, line := range strings.Split(string(output), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 2 {
+			continue
+		}
+		pid, pidErr := strconv.Atoi(fields[0])
+		parent, parentErr := strconv.Atoi(fields[1])
+		if pidErr == nil && parentErr == nil {
+			children[parent] = append(children[parent], pid)
+		}
+	}
+	result := []int{root}
+	for index := 0; index < len(result); index++ {
+		result = append(result, children[result[index]]...)
+	}
+	return result
+}

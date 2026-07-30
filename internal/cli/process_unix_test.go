@@ -6,13 +6,35 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"fmt"
+	"os"
 	"os/exec"
+	"os/signal"
 	"strconv"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
 )
+
+func TestManagedProcessHelper(t *testing.T) {
+	role := os.Getenv("HEIMDAL_MANAGED_PROCESS_HELPER")
+	if role == "" {
+		t.Skip("helper subprocess only")
+	}
+	if role == "child" {
+		signal.Ignore(syscall.SIGTERM)
+		select {}
+	}
+	child := exec.Command(os.Args[0], "-test.run=^TestManagedProcessHelper$")
+	child.Env = append(os.Environ(), "HEIMDAL_MANAGED_PROCESS_HELPER=child")
+	configureDetachedProcess(child)
+	if err := child.Start(); err != nil {
+		t.Fatal(err)
+	}
+	fmt.Printf("%d %d\n", os.Getpid(), child.Process.Pid)
+	select {}
+}
 
 func TestManagedProcessPIDFindsExactOwnedArgument(t *testing.T) {
 	argument := "heimdal-owned-process-" + strconv.FormatInt(time.Now().UnixNano(), 10)
@@ -31,6 +53,46 @@ func TestManagedProcessPIDFindsExactOwnedArgument(t *testing.T) {
 	}
 }
 
+func TestManagedProcessCancellationReapsSeparateDescendantGroup(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestManagedProcessHelper$")
+	cmd.Env = append(os.Environ(), "HEIMDAL_MANAGED_PROCESS_HELPER=parent")
+	managed := configureManagedProcess(cmd)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		killDetachedProcess(cmd.Process.Pid)
+	})
+
+	scanner := bufio.NewScanner(stdout)
+	if !scanner.Scan() {
+		t.Fatal("managed helper did not publish descendant pids")
+	}
+	fields := strings.Fields(scanner.Text())
+	if len(fields) != 2 {
+		t.Fatalf("managed helper published malformed descendant pids: %q", scanner.Text())
+	}
+	processPIDs := make([]int, 0, len(fields))
+	for _, field := range fields {
+		pid, err := strconv.Atoi(field)
+		if err != nil {
+			t.Fatal(err)
+		}
+		processPIDs = append(processPIDs, pid)
+	}
+
+	cancel()
+	if err := managed.wait(); err == nil {
+		t.Fatal("cancelled managed process unexpectedly succeeded")
+	}
+	assertProcessesGone(t, processPIDs)
+}
+
 func TestManagedProcessCancellationReapsDescendants(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", `
@@ -42,7 +104,7 @@ func TestManagedProcessCancellationReapsDescendants(t *testing.T) {
 		printf '%s %s\n' "$$" "$!"
 		while :; do sleep 1; done
 	`)
-	configureManagedProcess(cmd)
+	managed := configureManagedProcess(cmd)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		t.Fatal(err)
@@ -89,9 +151,14 @@ func TestManagedProcessCancellationReapsDescendants(t *testing.T) {
 	}
 
 	cancel()
-	if err := waitManagedProcess(cmd); err == nil {
+	if err := managed.wait(); err == nil {
 		t.Fatal("cancelled managed process unexpectedly succeeded")
 	}
+	assertProcessesGone(t, processPIDs)
+}
+
+func assertProcessesGone(t *testing.T, processPIDs []int) {
+	t.Helper()
 	for _, pid := range processPIDs {
 		deadline := time.Now().Add(time.Second)
 		for {
