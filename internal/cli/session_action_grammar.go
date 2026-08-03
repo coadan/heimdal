@@ -10,6 +10,69 @@ import (
 	"strings"
 )
 
+var sessionNamedKeyAliases = map[string]string{
+	"ALT":            "Alt",
+	"SHIFT":          "Shift",
+	"CONTROL":        "Control",
+	"CTRL":           "Control",
+	"META":           "Meta",
+	"CMD":            "Meta",
+	"COMMAND":        "Meta",
+	"CONTROLOREMETA": "ControlOrMeta",
+	"ENTER":          "Enter",
+	"RETURN":         "Enter",
+	"ESC":            "Escape",
+	"ESCAPE":         "Escape",
+	"TAB":            "Tab",
+	"SPACE":          "Space",
+	"BACKSPACE":      "Backspace",
+	"DELETE":         "Delete",
+	"DEL":            "Delete",
+	"INSERT":         "Insert",
+	"HOME":           "Home",
+	"END":            "End",
+	"PAGEUP":         "PageUp",
+	"PGUP":           "PageUp",
+	"PAGEDOWN":       "PageDown",
+	"PGDN":           "PageDown",
+	"ARROWUP":        "ArrowUp",
+	"ARROWDOWN":      "ArrowDown",
+	"ARROWLEFT":      "ArrowLeft",
+	"ARROWRIGHT":     "ArrowRight",
+	"CONTEXTMENU":    "ContextMenu",
+	"CAPSLOCK":       "CapsLock",
+	"NUMLOCK":        "NumLock",
+	"SCROLLLOCK":     "ScrollLock",
+	"PRINTSCREEN":    "PrintScreen",
+	"PAUSE":          "Pause",
+}
+
+func normalizeSessionActionArgs(action string, args []string) []string {
+	if action != "press" || len(args) == 0 {
+		return args
+	}
+
+	normalized := append([]string(nil), args...)
+	normalized[len(normalized)-1] = normalizeSessionPressKey(normalized[len(normalized)-1])
+	return normalized
+}
+
+func normalizeSessionPressKey(key string) string {
+	parts := strings.Split(key, "+")
+	changed := false
+	for index, part := range parts {
+		lookup := strings.NewReplacer("-", "", "_", "", " ", "").Replace(strings.ToUpper(part))
+		if canonical, ok := sessionNamedKeyAliases[lookup]; ok {
+			parts[index] = canonical
+			changed = true
+		}
+	}
+	if !changed {
+		return key
+	}
+	return strings.Join(parts, "+")
+}
+
 func planStableSessionAction(ctx context.Context, project Project, state *SessionState, statePath, action string, logicalArgs []string) ([]string, string, string, error) {
 	args := logicalArgs[1:]
 	switch action {

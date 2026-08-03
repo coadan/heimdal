@@ -74,6 +74,7 @@ func planSessionBatchFast(document sessionBatchDocument, state SessionState, opt
 }
 
 func translateSessionBatchFastStep(index int, step sessionBatchStep, retainedSnapshot string) (sessionBatchFastStep, bool) {
+	step.Args = normalizeSessionActionArgs(step.Command, step.Args)
 	logicalArgs := append([]string{step.Command}, step.Args...)
 	planned := sessionBatchFastStep{Index: index, LogicalArgs: logicalArgs, Observe: shouldObserveAfterSessionAction(step.Command), Full: step.Full, RefreshRefs: snapshotRefreshesReferences(step.Command)}
 	semanticLocator := func(target string) (string, bool) {

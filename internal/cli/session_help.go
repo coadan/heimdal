@@ -177,6 +177,9 @@ Usage:
 Usage:
   heimdal session press KEY [--name NAME] [--json]
   heimdal session press TARGET KEY [--name NAME] [--json]
+
+Named keys are case-insensitive. For example, ARROWDOWN, END, and CTRL+END
+are sent to Playwright as ArrowDown, End, and Control+End.
 `,
 	"type": `Type text globally or against a target through Playwright
 

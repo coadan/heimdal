@@ -654,6 +654,7 @@ func executeSessionAction(ctx context.Context, project Project, state *SessionSt
 		expectOptions.FullJSON = options.FullJSON
 		return executeSessionExpectAction(ctx, project, state, statePath, expectOptions)
 	}
+	options.Forwarded = normalizeSessionActionArgs(action, options.Forwarded)
 	logicalArgs := append([]string{action}, options.Forwarded...)
 	if action == "snapshot" {
 		logicalArgs = sessionSnapshotArgs(options.Boxes, options.Verbose, options.Forwarded)

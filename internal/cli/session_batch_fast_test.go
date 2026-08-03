@@ -242,6 +242,24 @@ func TestSessionBatchFastTranslationCoversKnownSafeActions(t *testing.T) {
 	}
 }
 
+func TestSessionBatchFastTranslationCanonicalizesNamedPressKeys(t *testing.T) {
+	planned, ok := translateSessionBatchFastStep(1, sessionBatchStep{Command: "press", Args: []string{"CTRL+END"}}, batchFastRetainedSnapshot)
+	if !ok {
+		t.Fatal("global press was not translated")
+	}
+	if strings.Join(planned.LogicalArgs, " ") != "press Control+End" || !strings.Contains(planned.Code, `page.keyboard.press("Control+End")`) {
+		t.Fatalf("global press plan = %#v", planned)
+	}
+
+	planned, ok = translateSessionBatchFastStep(2, sessionBatchStep{Command: "press", Args: []string{"e3", "ARROWDOWN"}}, batchFastRetainedSnapshot)
+	if !ok {
+		t.Fatal("targeted press was not translated")
+	}
+	if strings.Join(planned.LogicalArgs, " ") != "press e3 ArrowDown" || !strings.Contains(planned.Code, `.press("ArrowDown")`) {
+		t.Fatalf("targeted press plan = %#v", planned)
+	}
+}
+
 func TestSessionBatchRejectsInvalidNamedEvidence(t *testing.T) {
 	for _, document := range []string{
 		`{"version":1,"steps":[{"command":"evidence","args":["bad name","() => 1"]}]}`,

@@ -35,6 +35,32 @@ func TestStableActionGrammarNormalizesCoordinateClickAndValidatesShapes(t *testi
 	}
 }
 
+func TestNormalizeSessionPressKeys(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		args []string
+		want []string
+	}{
+		{name: "named key", args: []string{"END"}, want: []string{"End"}},
+		{name: "arrow key", args: []string{"ARROWDOWN"}, want: []string{"ArrowDown"}},
+		{name: "separator alias", args: []string{"arrow-down"}, want: []string{"ArrowDown"}},
+		{name: "modifier combination", args: []string{"CTRL+END"}, want: []string{"Control+End"}},
+		{name: "targeted modifier combination", args: []string{"e3", "shift+arrow_down"}, want: []string{"e3", "Shift+ArrowDown"}},
+		{name: "character", args: []string{"a"}, want: []string{"a"}},
+		{name: "unknown", args: []string{"NotAPlaywrightKey"}, want: []string{"NotAPlaywrightKey"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got := normalizeSessionActionArgs("press", test.args)
+			if strings.Join(got, "\x00") != strings.Join(test.want, "\x00") {
+				t.Fatalf("normalizeSessionActionArgs(press, %q) = %q, want %q", test.args, got, test.want)
+			}
+		})
+	}
+	if got := normalizeSessionActionArgs("type", []string{"END"}); strings.Join(got, "\x00") != "END" {
+		t.Fatalf("normalizeSessionActionArgs(type, END) = %q, want unchanged", got)
+	}
+}
+
 func TestStableActionGrammarUsesGeneratedLocatorForTargetedActions(t *testing.T) {
 	root := t.TempDir()
 	runDir := filepath.Join(root, "session")
